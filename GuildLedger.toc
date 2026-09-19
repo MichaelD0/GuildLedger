@@ -1,4 +1,4 @@
-## Interface: 110200
+## Interface: 120100
 ## Title: GuildLedger
 ## Notes: Scans the guild bank, syncs it across the guild, and keeps a shared shopping list of what's needed.
 ## Author: GuildLedger contributors
@@ -7,8 +7,9 @@
 ## DefaultState: enabled
 ## X-Curse-Project-Name: GuildLedger
 
-# NOTE: bump this Interface number to match the client you're testing against.
-# In-game: /run print(select(4, GetBuildInfo()))
+# NOTE: 120100 is a best guess for retail 12.1.0 (major*10000 + minor*100 +
+# patch). Confirm the exact build in-game and correct if needed:
+# /run print(select(4, GetBuildInfo()))
 
 Libs\embeds.xml
 

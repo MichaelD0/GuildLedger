@@ -66,8 +66,9 @@ error).
   periodically migrates old globals into `C_` namespaces — if the addon
   loads but the bank tab never populates, that's the first thing to check
   against Warcraft Wiki for the client version you're on.
-- **`## Interface` in `GuildLedger.toc`** is a placeholder — set it to your
-  client's build via `/run print(select(4, GetBuildInfo()))` in-game.
+- **`## Interface` in `GuildLedger.toc`** is set to `120100` (a best guess
+  for retail 12.1.0) — confirm the exact build via
+  `/run print(select(4, GetBuildInfo()))` in-game and correct it if needed.
 - Sync is last-writer-wins by timestamp (whole snapshot replaces whole
   snapshot). Fine for a bank/list that isn't being edited by two officers in
   the same second; a real conflict-merge strategy is a later improvement.
