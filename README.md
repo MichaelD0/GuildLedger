@@ -18,8 +18,15 @@ query it while standing at a guild banker with the bank window open. So:
    login, and `/gledger sync` does the same on demand.
 3. **Shopping list** — officers (configurable rank threshold) maintain a
    shared list of items + desired quantities. The UI diffs that list against
-   the cached bank contents and shows how many the guild holds versus how
-   many are wanted.
+   the cached bank contents and shows stock over target as `35 / 200`, green
+   once the target is met and red while it isn't.
+4. **Shop** — at the auction house, a side panel lists what's still missing.
+   Click a row and it searches for that item.
+
+The window opens itself when you walk up to a guild banker, and closes again
+when you leave — unless you already had it open, in which case it's yours and
+stays put. **Scan bank** and **Sync** buttons sit at the bottom of the window
+for when you'd rather not use slash commands.
 
 ## Commands
 
@@ -30,7 +37,9 @@ query it while standing at a guild banker with the bank window open. So:
 | `/gledger config` | Open the options panel. |
 | `/gledger scan` | Force a bank scan (must be at a guild banker). |
 | `/gledger status` | Print guild binding, cache contents and guild bank API availability. |
-| `/gledger debug` | Toggle trace output. Persists across reloads. |
+| `/gledger debug` | Toggle trace output *to chat*. Persists across reloads. |
+| `/gledger trace` | Report how many trace lines are buffered, and where they land. |
+| `/gledger trace clear` | Empty the trace buffer. |
 
 `/guildledger` works as an alias for all of the above.
 
@@ -40,10 +49,35 @@ Reachable via `/gledger config`:
 
 - **Auto-broadcast after scanning** — send your scan to the guild
   automatically once a scan finishes (~3s after opening the bank).
+- **Open the window at the guild bank** — show the GuildLedger window when
+  the guild bank opens and hide it again when it closes. A window you opened
+  yourself first is left alone on close.
+- **Show the shopping list at the auction house** — pin the list beside the
+  auction house window.
 - **Officer rank threshold** — guild rank index (0 = Guild Master) at or
   below which a member may edit the shopping list.
 - **Font size** — text size throughout the window, 10–24 (default 14).
 - **Low stock threshold** — reserved; nothing reads it yet.
+
+## At the auction house
+
+Opening the auction house pins a panel to the side of the window (it flips to
+the left if there's no room on the right) listing every shopping list entry
+icon-first, most-short-of-target first, with stock over target beside it.
+Clicking a row puts the item name in the auction house search box and runs
+the search.
+
+The panel only appears when there's actually something on the list, and its
+close button dismisses it for that visit. Opening the auction house also asks
+the guild for a fresh list (at most once a minute), so you aren't shopping
+from whatever snapshot you had at login.
+
+Driving Blizzard's search means calling into `Blizzard_AuctionHouseUI`
+internals, which are not a stable API. `SearchAuctionHouse` tries the search
+bar's `StartSearch`, then the search box's own `OnEnterPressed`, then
+`C_AuctionHouse.SendBrowseQuery`, each wrapped in `pcall`. The item name is
+written into the search box before any of that, so the worst case after a
+patch renames something is "press Enter yourself", not a Lua error.
 
 ## Who can edit the shopping list
 
@@ -72,7 +106,9 @@ Core.lua            AceAddon setup, per-guild data binding, permissions,
 BankScan.lua        Scans the guild bank UI into guildData.bank
 Comm.lua            Broadcasts/receives bank + shopping list snapshots (AceComm)
 ShoppingList.lua    CRUD + have/need diff logic for the shared shopping list
-UI.lua              AceGUI window: Bank Inventory tab, Shopping List tab
+UI.lua              AceGUI window: Bank Inventory tab, Shopping List tab,
+                    Scan/Sync toolbar, auto-open at the guild bank
+AuctionHouse.lua    Shopping list panel pinned to the auction house window
 Config.lua          AceConfig options panel
 Libs/               Vendored Ace3 libraries, committed to the repo
 Libs/embeds.xml     Pulls in the Ace3 libraries listed below
@@ -104,7 +140,29 @@ you're currently interacting with a guild banker, and whether the guild bank
 API functions exist on your client.
 
 `/gledger debug` adds a running trace of the scan — banker opened, tab count,
-tabs and item stacks recorded.
+tabs and item stacks recorded — to your chat frame.
+
+That trace is **also kept on disk regardless of whether `debug` is on**. The
+last 200 lines live in `GuildLedgerDB.global.trace`, timestamped and tagged
+with the character that produced them, and land in
+
+```
+WTF/Account/<account>/SavedVariables/GuildLedger.lua
+```
+
+WoW only writes saved variables on logout or `/reload`, so that file always
+lags the live session by however long it's been since the last one — `/reload`
+first if you want the current session's lines. `debug` therefore controls only
+whether the trace is *printed*; it no longer controls whether it's *recorded*,
+so a problem can be read back after the fact instead of needing tracing to
+have been switched on before it happened.
+
+`/gledger trace` reports how many lines are buffered; `/gledger trace clear`
+empties it. A session-start marker is written on every load, so it's easy to
+tell where one session's lines end and the next begins.
+
+The same directory holds `!BugGrabber.lua` if you run BugSack/!BugGrabber,
+which is where actual Lua errors (with stack and locals) end up.
 
 Errors show up in BugSack/!BugGrabber if you have them. Worth checking first:
 a function that silently never runs usually means something earlier in the
@@ -125,6 +183,9 @@ same handler threw.
   the *receiver's* setting, so guildmates who configure it differently will
   disagree about who may edit. Moving the threshold into the synced guild
   data would fix this properly.
+- **The auction house panel rides on Blizzard internals.** See above: it
+  degrades to filling the search box rather than erroring, but a patch can
+  still make one-click search stop working until this is updated.
 - No minimap button, no low-stock alerts, no addon-comm compression. Very
   large guild banks may sync slowly over guild chat's rate limits (AceComm
   chunks, but chunks are throttled).
@@ -135,7 +196,8 @@ same handler threw.
 - Request queue: members request an item + qty; officers see a queue
   instead of guild-chat spam.
 - Auto-build shopping list entries from a profession/crafting queue.
-- Auction house price lookups (TSM/Auctionator hooks) on shopping list rows.
+- Auction house price lookups (TSM/Auctionator hooks) on shopping list rows
+  — the AH panel shows what's missing, but no prices.
 - Withdrawal log / audit trail.
 - Export shopping list to Discord/clipboard.
 - Minimap icon (LibDBIcon) and LDB data feed.

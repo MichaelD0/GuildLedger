@@ -123,12 +123,18 @@ frame:SetScript("OnEvent", function(_, event, interactionType)
     if event == "PLAYER_INTERACTION_MANAGER_FRAME_SHOW" then
         GuildLedger:Debug("guild banker opened, starting scan")
         GuildLedger:StartBankScan()
+        if GuildLedger.ui then
+            GuildLedger.ui:OnGuildBankOpened()
+        end
     else
         GuildLedger:Debug("guild banker closed")
         scanning = false
         if scanTicker then
             scanTicker:Cancel()
             scanTicker = nil
+        end
+        if GuildLedger.ui then
+            GuildLedger.ui:OnGuildBankClosed()
         end
     end
 end)

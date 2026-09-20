@@ -22,6 +22,10 @@ GuildLedger.ALWAYS_ALLOWED_EDITORS = {
 }
 
 local defaults = {
+    global = {
+        -- Ring buffer of recent trace lines; see GuildLedger:Trace.
+        trace = {},
+    },
     factionrealm = {
         guilds = {
             -- [guildName] = { bank = { tabs = {}, lastScan = 0, lastScannedBy = nil }, shoppingList = {} }
@@ -32,9 +36,15 @@ local defaults = {
         -- the shared shopping list. Lower index = higher rank.
         officerRankThreshold = 1,
         autoSyncOnBankOpen = true,
+        autoOpenOnBankOpen = true,
+        showOnAuctionHouse = true,
         lowStockThreshold = 5,
         fontSize = 14,
         debug = false,
+        -- AceGUI's own status table for the main window (width/height/top/left).
+        -- Living in the profile is what makes the window stay where you parked
+        -- it across sessions, which matters now that it opens itself at the bank.
+        window = { width = 620, height = 560 },
     },
 }
 
@@ -45,6 +55,10 @@ function GuildLedger:OnInitialize()
 end
 
 function GuildLedger:OnEnable()
+    self:Trace(("--- session start: GuildLedger %s, client %s ---"):format(
+        (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(ADDON_NAME, "Version")) or "?",
+        tostring(select(4, GetBuildInfo()))))
+
     self:RegisterComm(self.COMM_PREFIX)
     self:RegisterEvent("PLAYER_GUILD_UPDATE", "RefreshGuildData")
     self:RegisterEvent("PLAYER_ENTERING_WORLD", "RefreshGuildData")
@@ -58,6 +72,22 @@ function GuildLedger:OnDataUpdated()
     if self.ui then
         self.ui:Refresh()
     end
+    if self.ah then
+        -- UpdateVisibility, not Refresh: a first item added while the auction
+        -- house is open has to make the panel appear, not just repopulate it.
+        self.ah:UpdateVisibility()
+    end
+end
+
+-- True while the guild bank window is open. GUILDBANKFRAME_OPENED is dead on
+-- retail (see BankScan.lua), so the interaction manager is the only honest
+-- answer; the nil guards keep this working if that API moves again.
+function GuildLedger:IsAtGuildBanker()
+    local mgr = C_PlayerInteractionManager
+    if not (mgr and mgr.IsInteractingWithNpcOfType and Enum and Enum.PlayerInteractionType) then
+        return false
+    end
+    return mgr.IsInteractingWithNpcOfType(Enum.PlayerInteractionType.GuildBanker) and true or false
 end
 
 -- For a second or two after login the client knows you're in a guild
@@ -220,15 +250,38 @@ function GuildLedger:IsOfficer()
     return self:CanEditList()
 end
 
--- Prints only when tracing is on (/gledger debug). Kept cheap so Debug calls
--- can sit on hot-ish paths like the bank scan without costing anything when
--- tracing is off.
+-- Trace lines go to saved variables whether or not tracing is being printed,
+-- so a problem can be read back afterwards rather than needing /gledger debug
+-- to have been switched on before it happened. Capped at TRACE_MAX lines - a
+-- few tens of kilobytes at worst - and flushed to
+-- WTF/Account/<account>/SavedVariables/GuildLedger.lua on logout or /reload,
+-- the only moments WoW writes saved variables at all.
+local TRACE_MAX = 200
+
+function GuildLedger:Trace(msg)
+    if not self.db then return end
+
+    local trace = self.db.global.trace
+    trace[#trace + 1] = ("%s  %s  %s"):format(
+        date("%Y-%m-%d %H:%M:%S"), UnitName("player") or "?", msg)
+
+    -- Oldest-first so the file reads in order. A shift costs O(n) on a 200
+    -- entry table, which is nothing next to how rarely Debug is called.
+    while #trace > TRACE_MAX do
+        table.remove(trace, 1)
+    end
+end
+
+-- Records always, prints only when tracing is on (/gledger debug).
 function GuildLedger:Debug(fmt, ...)
-    if not self.db or not self.db.profile.debug then return end
     local msg = fmt
     if select("#", ...) > 0 then
         msg = fmt:format(...)
     end
+
+    self:Trace(msg)
+
+    if not self.db or not self.db.profile.debug then return end
     self:Print("|cff888888[trace]|r " .. msg)
 end
 
@@ -260,10 +313,9 @@ function GuildLedger:PrintStatus()
         self:Print(("shopping list: %d entry(ies)"):format(listed))
     end
 
-    local atBanker = C_PlayerInteractionManager
-        and C_PlayerInteractionManager.IsInteractingWithNpcOfType
-        and C_PlayerInteractionManager.IsInteractingWithNpcOfType(Enum.PlayerInteractionType.GuildBanker)
-    self:Print("at guild banker: " .. tostring(atBanker))
+    self:Print(("trace: %d/%d line(s) buffered"):format(#self.db.global.trace, TRACE_MAX))
+
+    self:Print("at guild banker: " .. tostring(self:IsAtGuildBanker()))
     self:Print(("api: GetNumGuildBankTabs=%s GetGuildBankItemLink=%s tabs=%s"):format(
         tostring(GetNumGuildBankTabs ~= nil),
         tostring(GetGuildBankItemLink ~= nil),
@@ -287,6 +339,15 @@ function GuildLedger:SlashCommand(input)
         end
         self:RequestSync()
         self:Print("Requested a bank and shopping list sync from the guild.")
+    elseif input == "trace" then
+        self:Print(("%d of %d trace line(s) buffered."):format(#self.db.global.trace, TRACE_MAX))
+        -- Forward slashes on purpose: Lua 5.1 drops the backslash on an
+        -- unknown escape, so a Windows path written the Windows way in a
+        -- string literal silently loses its separators.
+        self:Print("Written to WTF/Account/<account>/SavedVariables/GuildLedger.lua on logout or /reload.")
+    elseif input == "trace clear" then
+        wipe(self.db.global.trace)
+        self:Print("Trace buffer cleared.")
     elseif input == "config" then
         Settings.OpenToCategory(self.optionsCategoryID or "GuildLedger")
     else

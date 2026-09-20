@@ -16,11 +16,34 @@ local options = {
             get = function() return GuildLedger.db.profile.autoSyncOnBankOpen end,
             set = function(_, value) GuildLedger.db.profile.autoSyncOnBankOpen = value end,
         },
+        autoOpenOnBankOpen = {
+            type = "toggle",
+            name = "Open the window at the guild bank",
+            desc = "Show the GuildLedger window automatically when you open the guild bank, and close it again when you walk away. A window you opened yourself beforehand is left alone.",
+            order = 2,
+            width = "full",
+            get = function() return GuildLedger.db.profile.autoOpenOnBankOpen end,
+            set = function(_, value) GuildLedger.db.profile.autoOpenOnBankOpen = value end,
+        },
+        showOnAuctionHouse = {
+            type = "toggle",
+            name = "Show the shopping list at the auction house",
+            desc = "Pin the guild shopping list beside the auction house window. Click a row to search for that item.",
+            order = 3,
+            width = "full",
+            get = function() return GuildLedger.db.profile.showOnAuctionHouse end,
+            set = function(_, value)
+                GuildLedger.db.profile.showOnAuctionHouse = value
+                if GuildLedger.ah then
+                    GuildLedger.ah:UpdateVisibility()
+                end
+            end,
+        },
         officerRankThreshold = {
             type = "range",
             name = "Officer rank threshold",
             desc = "Guild rank index (0 = Guild Master) at or above which a member can edit the shared shopping list. Lower number = fewer people can edit.",
-            order = 2,
+            order = 4,
             min = 0,
             max = 9,
             step = 1,
@@ -32,7 +55,7 @@ local options = {
             type = "range",
             name = "Font size",
             desc = "Text size used throughout the GuildLedger window.",
-            order = 3,
+            order = 5,
             min = 10,
             max = 24,
             step = 1,
@@ -50,7 +73,7 @@ local options = {
             type = "range",
             name = "Low stock threshold",
             desc = "Reserved for a future low-stock warning feature.",
-            order = 4,
+            order = 6,
             min = 0,
             max = 50,
             step = 1,

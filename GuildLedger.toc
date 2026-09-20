@@ -18,4 +18,5 @@ BankScan.lua
 Comm.lua
 ShoppingList.lua
 UI.lua
+AuctionHouse.lua
 Config.lua
