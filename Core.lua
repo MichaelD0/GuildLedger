@@ -18,7 +18,7 @@ GuildLedger.COMM_PREFIX = "GuildLedger1"
 -- common - the realm suffix is the only thing separating you from a guildmate
 -- who picked the same name on a connected realm.
 GuildLedger.ALWAYS_ALLOWED_EDITORS = {
-    ["Drakktar"] = true,
+    ["Drakktar-Illidan"] = true,
 }
 
 local defaults = {
