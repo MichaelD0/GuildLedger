@@ -27,13 +27,37 @@ function GuildLedger:BroadcastShoppingList()
     self:SendCommMessage(self.COMM_PREFIX, payload, "GUILD")
 end
 
--- Asks the guild "does anyone have a newer bank snapshot than mine?" so a
--- player who wasn't online for the last scan can catch up without needing
--- to visit the bank themselves.
-function GuildLedger:RequestBankSync()
+-- Asks the guild to catch us up: a newer bank snapshot if anyone has one, and
+-- the current shopping list. Without this a player who was offline while the
+-- list was edited keeps their stale saved copy indefinitely, since edits are
+-- only broadcast at the moment they happen.
+function GuildLedger:RequestSync()
     if not self.guildData then return end
     local payload = AceSerializer:Serialize(MSG_SYNC_REQUEST, self.guildData.bank.lastScan or 0)
     self:SendCommMessage(self.COMM_PREFIX, payload, "GUILD")
+end
+
+-- Only editors answer with the list, and only after a short random pause. If
+-- several officers are online they would otherwise all reply at once with an
+-- identical payload; whoever sees another answer land first stays quiet.
+local listReplyTimer
+local lastListReceivedAt = 0
+
+function GuildLedger:AnswerListSyncRequest()
+    if not self:CanEditList() then return end
+    if not next(self.guildData.shoppingList) then return end
+    if listReplyTimer then return end
+
+    local seenAt = lastListReceivedAt
+    listReplyTimer = C_Timer.NewTimer(math.random() * 2, function()
+        listReplyTimer = nil
+        if lastListReceivedAt > seenAt then
+            GuildLedger:Debug("another officer answered the list sync first")
+            return
+        end
+        GuildLedger:Debug("answering list sync request")
+        GuildLedger:BroadcastShoppingList()
+    end)
 end
 
 function GuildLedger:OnCommReceived(prefix, message, distribution, sender)
@@ -57,11 +81,13 @@ function GuildLedger:OnCommReceived(prefix, message, distribution, sender)
             return
         end
         self.guildData.shoppingList = data
+        lastListReceivedAt = GetTime()
         self:SendMessage("GuildLedger_ListUpdated")
     elseif msgType == MSG_SYNC_REQUEST then
         local theirLastScan = data or 0
         if (self.guildData.bank.lastScan or 0) > theirLastScan then
             self:BroadcastBankSnapshot()
         end
+        self:AnswerListSyncRequest()
     end
 end

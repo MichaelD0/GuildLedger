@@ -65,6 +65,10 @@ end
 -- because the guild name arrives with the roster rather than with the player.
 -- Taking that nil at face value permanently strands guildData, so we poll
 -- until the name lands instead.
+-- Long enough after login that the guild channel is up and we aren't adding
+-- to the addon message burst everything else makes on arrival.
+local INITIAL_SYNC_DELAY = 8
+
 local GUILD_INFO_RETRY_INTERVAL = 1
 local GUILD_INFO_MAX_RETRIES = 15
 local guildInfoTicker
@@ -123,6 +127,20 @@ function GuildLedger:RefreshGuildData()
         shoppingList = {},
     }
     self.guildData = guilds[guildName]
+
+    -- Catch up once per session, a few seconds after the guild resolves, so a
+    -- member who was offline for the last edits doesn't sit on a stale list
+    -- until someone happens to change something. RefreshGuildData runs on
+    -- every roster update, hence the guard.
+    if not self.requestedInitialSync then
+        self.requestedInitialSync = true
+        C_Timer.After(INITIAL_SYNC_DELAY, function()
+            if self.guildData then
+                self:Debug("requesting initial sync from the guild")
+                self:RequestSync()
+            end
+        end)
+    end
 
     -- The window may already be open showing "You're not in a guild."
     self:OnDataUpdated()
@@ -267,8 +285,8 @@ function GuildLedger:SlashCommand(input)
             self:Print("You're not in a guild.")
             return
         end
-        self:RequestBankSync()
-        self:Print("Requested a bank sync from the guild.")
+        self:RequestSync()
+        self:Print("Requested a bank and shopping list sync from the guild.")
     elseif input == "config" then
         Settings.OpenToCategory(self.optionsCategoryID or "GuildLedger")
     else
