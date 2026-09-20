@@ -19,7 +19,10 @@ local AH_ADDON = "Blizzard_AuctionHouseUI"
 local SYNC_REQUEST_COOLDOWN = 60
 local lastSyncRequest = 0
 
-local PANEL_WIDTH = 260
+-- Wide enough that an item name, its icon and "35 / 200" all fit on one line
+-- without the name being clipped to guesswork. The panel flips to the left of
+-- the auction house window when there isn't room on the right.
+local PANEL_WIDTH = 340
 local ROW_PADDING = 8
 local MIN_ROW_HEIGHT = 20
 
@@ -102,9 +105,12 @@ local function AcquireRow(index)
     row = CreateFrame("Button", nil, scrollChild)
     row:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
 
+    row.icon = row:CreateTexture(nil, "ARTWORK")
+    row.icon:SetPoint("LEFT", 2, 0)
+
     row.name = row:CreateFontString(nil, "OVERLAY")
     row.name:SetFontObject(ns.bodyFont)
-    row.name:SetPoint("LEFT", 2, 0)
+    row.name:SetPoint("LEFT", row.icon, "RIGHT", 4, 0)
     row.name:SetJustifyH("LEFT")
     row.name:SetWordWrap(false)
 
@@ -226,18 +232,22 @@ function AH:Refresh()
         row.name:SetFontObject(ns.bodyFont)
         row.need:SetFontObject(ns.bodyFont)
 
+        local iconSize = height - 4
+        row.icon:SetSize(iconSize, iconSize)
+        row.icon:SetTexture(ns.ItemIcon(entry.itemLink))
+
         -- A full item link in a FontString renders as the coloured item name,
         -- so quality colouring comes for free; no GetItemInfo cache dance.
         row.name:SetText(entry.itemLink)
 
         -- Same readout as the shopping list tab: stock over target, green once
-        -- the target is met and red while it isn't. Narrow on purpose - this
-        -- panel is 260px wide and the item name needs the rest.
+        -- the target is met and red while it isn't. Narrow on purpose - the
+        -- item name gets whatever this doesn't use.
         local color = entry.missing == 0 and "|cff40ff40" or "|cffff5555"
         row.need:SetText(("%s%d|r / %d"):format(color, entry.have, entry.desired))
 
-        -- Leave the name room for the count, whatever the font size.
-        row.name:SetWidth(math.max(20, width - row.need:GetStringWidth() - 10))
+        -- Leave the name room for the icon and the count, whatever the font size.
+        row.name:SetWidth(math.max(20, width - iconSize - 6 - row.need:GetStringWidth() - 10))
         row:Show()
     end
 

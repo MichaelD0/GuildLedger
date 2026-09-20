@@ -40,7 +40,7 @@ local defaults = {
         -- AceGUI's own status table for the main window (width/height/top/left).
         -- Living in the profile is what makes the window stay where you parked
         -- it across sessions, which matters now that it opens itself at the bank.
-        window = { width = 560, height = 560 },
+        window = { width = 620, height = 560 },
     },
 }
 

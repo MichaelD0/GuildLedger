@@ -127,6 +127,31 @@ local function ItemNameFromLink(itemLink)
 end
 ns.ItemNameFromLink = ItemNameFromLink
 
+-- GetItemInfoInstant parses the link itself instead of consulting the item
+-- cache, so the icon is there on the first draw. GetItemInfo would return nil
+-- for anything the client hasn't seen yet and pop the icons in later.
+local function ItemIcon(itemLink)
+    if not itemLink then return nil end
+    local _, _, _, _, icon = C_Item.GetItemInfoInstant(itemLink)
+    return icon
+end
+ns.ItemIcon = ItemIcon
+
+-- Icons track the font size so a row stays one line of text tall.
+local function IconSize()
+    return math.max(16, CurrentFontSize() + 2)
+end
+ns.IconSize = IconSize
+
+-- AceGUI's Label drops the image above the text, centred, once the text has
+-- less than 200px to live in - so a squeezed window turns every row into two.
+-- Left as-is: the threshold is Label's, the default window is nowhere near it,
+-- and a window narrow enough to trip it is unreadable for other reasons.
+local function SetItemIcon(widget, itemLink)
+    widget:SetImageSize(IconSize(), IconSize())
+    widget:SetImage(ItemIcon(itemLink))
+end
+
 -- needle must already be lowercased by the caller; this runs once per slot
 -- per keystroke, so it stays off the hot path.
 local function MatchesFilter(itemLink, needle)
@@ -244,6 +269,7 @@ local function BuildBankTab(container)
 
                 local row = NewInteractiveLabel(("%s  x%d"):format(item.itemLink, item.count or 0))
                 row:SetFullWidth(true)
+                SetItemIcon(row, item.itemLink)
                 SetStripe(row, rowIndex)
                 AddTooltip(row, item.itemLink)
                 row:SetCallback("OnClick", function()
@@ -271,7 +297,7 @@ end
 -- enough to leave the item name room, the word rendered as "Re...". The tooltip
 -- carries the meaning instead.
 -- Keep the total a little under 1.0 or Flow rounding wraps the last column.
-local COL_ITEM, COL_HAVE, COL_WANT, COL_REMOVE = 0.58, 0.13, 0.15, 0.10
+local COL_ITEM, COL_HAVE, COL_WANT, COL_REMOVE = 0.60, 0.12, 0.15, 0.10
 
 -- Stock against target, green once the target is met and red while it isn't.
 -- Officers get the bare "35 /" because the quantity box sitting next to it is
@@ -342,6 +368,7 @@ local function BuildShoppingTab(container)
 
         local item = NewInteractiveLabel(entry.itemLink)
         item:SetRelativeWidth(COL_ITEM)
+        SetItemIcon(item, entry.itemLink)
         AddTooltip(item, entry.itemLink)
         row:AddChild(item)
 

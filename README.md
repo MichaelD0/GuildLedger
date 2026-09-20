@@ -59,9 +59,9 @@ Reachable via `/gledger config`:
 
 ## At the auction house
 
-Opening the auction house pins a narrow panel to the side of the window (it
-flips to the left if there's no room on the right) listing every shopping
-list entry, most-short-of-target first, with how many are still needed.
+Opening the auction house pins a panel to the side of the window (it flips to
+the left if there's no room on the right) listing every shopping list entry
+icon-first, most-short-of-target first, with stock over target beside it.
 Clicking a row puts the item name in the auction house search box and runs
 the search.
 
