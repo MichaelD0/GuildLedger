@@ -1,0 +1,48 @@
+name: Release
+
+# Pushing a tag like v0.2.0 builds the addon zip and publishes it as a
+# GitHub release. Nothing else triggers this.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build the addon zip
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+          # The tag is the source of truth for the version the client shows.
+          sed -i "s/^## Version:.*/## Version: $VERSION/" GuildLedger.toc
+          grep '^## Version:' GuildLedger.toc
+
+          # WoW expects the addon to live in a folder named after the .toc,
+          # so the zip has to nest everything under GuildLedger/.
+          mkdir -p build/GuildLedger
+          git ls-files -z \
+            | grep -zv -e '^\.github/' -e '^\.pkgmeta$' -e '^\.gitignore$' -e '^release\.ps1$' \
+            | xargs -0 cp --parents -t build/GuildLedger/
+
+          (cd build && zip -qr "../GuildLedger-$VERSION.zip" GuildLedger)
+          unzip -l "GuildLedger-$VERSION.zip"
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "GuildLedger-${VERSION}.zip" \
+            --title "GuildLedger ${VERSION}" \
+            --generate-notes

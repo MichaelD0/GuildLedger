@@ -4,6 +4,22 @@ A World of Warcraft (retail) addon that scans your guild bank, syncs that
 snapshot across the guild, and keeps a personal shopping list of what you
 mean to stock it with.
 
+## Installing
+
+Grab the latest `GuildLedger-x.y.z.zip` from the
+[Releases page](https://github.com/MichaelD0/GuildLedger/releases/latest) and
+unzip it into:
+
+    World of Warcraft\_retail_\Interface\AddOns\
+
+The zip already contains a `GuildLedger` folder, so you should end up with
+`AddOns\GuildLedger\GuildLedger.toc`. Reload with `/reload` if WoW is already
+running, or just restart the client.
+
+To update, unzip the new release over the old folder and overwrite. Your
+settings and shopping list live in `WTF\`, not in the addon folder, so they
+survive the overwrite.
+
 ## How it works
 
 Blizzard doesn't let addons read guild bank contents remotely — you can only
@@ -163,6 +179,25 @@ which is where actual Lua errors (with stack and locals) end up.
 Errors show up in BugSack/!BugGrabber if you have them. Worth checking first:
 a function that silently never runs usually means something earlier in the
 same handler threw.
+
+## Releasing
+
+Releases are cut from tags. `release.ps1` does the whole dance — it bumps
+`## Version:` in the .toc, commits, tags, and pushes:
+
+    .\release.ps1 0.2.0
+
+Pushing the `v0.2.0` tag triggers `.github/workflows/release.yml`, which
+rebuilds the .toc version from the tag, zips everything tracked in git (minus
+`.github/`, `.pkgmeta`, `.gitignore` and `release.ps1`) under a top-level
+`GuildLedger/` folder, and publishes it as a GitHub release with
+auto-generated notes from the commits since the last tag.
+
+The script refuses to run on a dirty tree, off `main` (pass `-AllowAnyBranch`
+if you really mean it), or on a tag that already exists.
+
+If a release goes out wrong, delete the release and its tag on GitHub, then
+`git tag -d v0.2.0 && git push origin :refs/tags/v0.2.0` locally and re-cut.
 
 ## Known rough edges
 
