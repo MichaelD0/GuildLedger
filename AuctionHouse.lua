@@ -163,9 +163,11 @@ local function CreatePanel()
     headerText:SetPoint("TOPRIGHT", -16, -38)
     headerText:SetJustifyH("LEFT")
 
+    -- Hung off the bottom of the subtitle rather than off the panel, so the
+    -- breathing room under it stays the same however tall the font is.
     local scroll = CreateFrame("ScrollFrame", "GuildLedgerAHPanelScroll", panel, "UIPanelScrollFrameTemplate")
-    scroll:SetPoint("TOPLEFT", 14, -60)
-    scroll:SetPoint("BOTTOMRIGHT", -30, 14)
+    scroll:SetPoint("TOPLEFT", headerText, "BOTTOMLEFT", -2, -14)
+    scroll:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -30, 14)
     panel.scroll = scroll
 
     scrollChild = CreateFrame("Frame", nil, scroll)
@@ -208,7 +210,7 @@ function AH:Refresh()
     headerText:SetFontObject(ns.bodyFont)
 
     local entries = GuildLedger:GetShoppingListStatus()
-    headerText:SetText("In bank / wanted. Click to search.")
+    headerText:SetText("Click to search.")
 
     local height = RowHeight()
     local width = scrollChild:GetWidth()
