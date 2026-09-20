@@ -271,7 +271,20 @@ end
 -- enough to leave the item name room, the word rendered as "Re...". The tooltip
 -- carries the meaning instead.
 -- Keep the total a little under 1.0 or Flow rounding wraps the last column.
-local COL_ITEM, COL_HAVE, COL_WANT, COL_REMOVE = 0.40, 0.32, 0.15, 0.10
+local COL_ITEM, COL_HAVE, COL_WANT, COL_REMOVE = 0.58, 0.13, 0.15, 0.10
+
+-- Stock against target, green once the target is met and red while it isn't.
+-- Officers get the bare "35 /" because the quantity box sitting next to it is
+-- the target, and printing it twice helps nobody; everyone else gets both
+-- numbers in one label. Either way it replaces "35  (need 165 more)" with the
+-- same information in about a third of the width, which the item name takes.
+local function StockText(entry, withTarget)
+    local color = entry.missing == 0 and "|cff40ff40" or "|cffff5555"
+    if withTarget then
+        return ("%s%d|r / %d"):format(color, entry.have, entry.desired)
+    end
+    return ("%s%d|r /"):format(color, entry.have)
+end
 
 local function BuildShoppingTab(container)
     local scroll = AceGUI:Create("ScrollFrame")
@@ -318,12 +331,11 @@ local function BuildShoppingTab(container)
     local hItem = NewLabel("Item", headerFont)
     hItem:SetRelativeWidth(COL_ITEM)
     head:AddChild(hItem)
-    local hHave = NewLabel("In guild bank", headerFont)
-    hHave:SetRelativeWidth(COL_HAVE)
-    head:AddChild(hHave)
-    local hWant = NewLabel("Wanted", headerFont)
-    hWant:SetRelativeWidth(canEdit and COL_WANT or (COL_WANT + COL_REMOVE))
-    head:AddChild(hWant)
+    -- One heading over both halves of "35 / 200", whether the second half is a
+    -- label or the quantity box.
+    local hStock = NewLabel("In bank / wanted", headerFont)
+    hStock:SetRelativeWidth(COL_HAVE + COL_WANT)
+    head:AddChild(hStock)
 
     for index, entry in ipairs(entries) do
         local row = NewRow(scroll, index)
@@ -333,14 +345,8 @@ local function BuildShoppingTab(container)
         AddTooltip(item, entry.itemLink)
         row:AddChild(item)
 
-        local haveText
-        if entry.missing == 0 then
-            haveText = ("|cff40ff40%d|r  (stocked)"):format(entry.have)
-        else
-            haveText = ("|cffff5555%d|r  (need %d more)"):format(entry.have, entry.missing)
-        end
-        local have = NewLabel(haveText)
-        have:SetRelativeWidth(COL_HAVE)
+        local have = NewLabel(StockText(entry, not canEdit))
+        have:SetRelativeWidth(canEdit and COL_HAVE or (COL_HAVE + COL_WANT))
         row:AddChild(have)
 
         if canEdit then
@@ -366,10 +372,6 @@ local function BuildShoppingTab(container)
                 UI:Refresh()
             end)
             row:AddChild(remove)
-        else
-            local qty = NewLabel(tostring(entry.desired))
-            qty:SetRelativeWidth(COL_WANT + COL_REMOVE)
-            row:AddChild(qty)
         end
     end
 end

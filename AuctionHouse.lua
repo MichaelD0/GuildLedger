@@ -208,7 +208,7 @@ function AH:Refresh()
     headerText:SetFontObject(ns.bodyFont)
 
     local entries = GuildLedger:GetShoppingListStatus()
-    headerText:SetText("Click an item to search for it.")
+    headerText:SetText("In bank / wanted. Click to search.")
 
     local height = RowHeight()
     local width = scrollChild:GetWidth()
@@ -228,11 +228,11 @@ function AH:Refresh()
         -- so quality colouring comes for free; no GetItemInfo cache dance.
         row.name:SetText(entry.itemLink)
 
-        if entry.missing > 0 then
-            row.need:SetText(("|cffff5555need %d|r"):format(entry.missing))
-        else
-            row.need:SetText("|cff40ff40stocked|r")
-        end
+        -- Same readout as the shopping list tab: stock over target, green once
+        -- the target is met and red while it isn't. Narrow on purpose - this
+        -- panel is 260px wide and the item name needs the rest.
+        local color = entry.missing == 0 and "|cff40ff40" or "|cffff5555"
+        row.need:SetText(("%s%d|r / %d"):format(color, entry.have, entry.desired))
 
         -- Leave the name room for the count, whatever the font size.
         row.name:SetWidth(math.max(20, width - row.need:GetStringWidth() - 10))

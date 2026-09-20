@@ -18,8 +18,8 @@ query it while standing at a guild banker with the bank window open. So:
    login, and `/gledger sync` does the same on demand.
 3. **Shopping list** — officers (configurable rank threshold) maintain a
    shared list of items + desired quantities. The UI diffs that list against
-   the cached bank contents and shows how many the guild holds versus how
-   many are wanted.
+   the cached bank contents and shows stock over target as `35 / 200`, green
+   once the target is met and red while it isn't.
 4. **Shop** — at the auction house, a side panel lists what's still missing.
    Click a row and it searches for that item.
 
