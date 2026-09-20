@@ -56,9 +56,13 @@ function GuildLedger:OnEnable()
     self:RefreshGuildData()
 end
 
-function GuildLedger:OnDataUpdated()
+-- AceEvent hands a message handler the message name as its first argument, so
+-- this is the same handler for both messages and still knows which one fired.
+-- The window draws a shopping-list edit far more cheaply than a bank update,
+-- so telling it which it is, is worth the one branch.
+function GuildLedger:OnDataUpdated(message)
     if self.ui then
-        self.ui:Refresh()
+        self.ui:Refresh(message == "GuildLedger_ListUpdated" and "list" or nil)
     end
     if self.ah then
         -- UpdateVisibility, not Refresh: a first item added while the auction
