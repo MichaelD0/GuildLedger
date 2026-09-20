@@ -20,6 +20,13 @@ query it while standing at a guild banker with the bank window open. So:
    shared list of items + desired quantities. The UI diffs that list against
    the cached bank contents and shows how many the guild holds versus how
    many are wanted.
+4. **Shop** — at the auction house, a side panel lists what's still missing.
+   Click a row and it searches for that item.
+
+The window opens itself when you walk up to a guild banker, and closes again
+when you leave — unless you already had it open, in which case it's yours and
+stays put. **Scan bank** and **Sync** buttons sit at the bottom of the window
+for when you'd rather not use slash commands.
 
 ## Commands
 
@@ -40,10 +47,35 @@ Reachable via `/gledger config`:
 
 - **Auto-broadcast after scanning** — send your scan to the guild
   automatically once a scan finishes (~3s after opening the bank).
+- **Open the window at the guild bank** — show the GuildLedger window when
+  the guild bank opens and hide it again when it closes. A window you opened
+  yourself first is left alone on close.
+- **Show the shopping list at the auction house** — pin the list beside the
+  auction house window.
 - **Officer rank threshold** — guild rank index (0 = Guild Master) at or
   below which a member may edit the shopping list.
 - **Font size** — text size throughout the window, 10–24 (default 14).
 - **Low stock threshold** — reserved; nothing reads it yet.
+
+## At the auction house
+
+Opening the auction house pins a narrow panel to the side of the window (it
+flips to the left if there's no room on the right) listing every shopping
+list entry, most-short-of-target first, with how many are still needed.
+Clicking a row puts the item name in the auction house search box and runs
+the search.
+
+The panel only appears when there's actually something on the list, and its
+close button dismisses it for that visit. Opening the auction house also asks
+the guild for a fresh list (at most once a minute), so you aren't shopping
+from whatever snapshot you had at login.
+
+Driving Blizzard's search means calling into `Blizzard_AuctionHouseUI`
+internals, which are not a stable API. `SearchAuctionHouse` tries the search
+bar's `StartSearch`, then the search box's own `OnEnterPressed`, then
+`C_AuctionHouse.SendBrowseQuery`, each wrapped in `pcall`. The item name is
+written into the search box before any of that, so the worst case after a
+patch renames something is "press Enter yourself", not a Lua error.
 
 ## Who can edit the shopping list
 
@@ -72,7 +104,9 @@ Core.lua            AceAddon setup, per-guild data binding, permissions,
 BankScan.lua        Scans the guild bank UI into guildData.bank
 Comm.lua            Broadcasts/receives bank + shopping list snapshots (AceComm)
 ShoppingList.lua    CRUD + have/need diff logic for the shared shopping list
-UI.lua              AceGUI window: Bank Inventory tab, Shopping List tab
+UI.lua              AceGUI window: Bank Inventory tab, Shopping List tab,
+                    Scan/Sync toolbar, auto-open at the guild bank
+AuctionHouse.lua    Shopping list panel pinned to the auction house window
 Config.lua          AceConfig options panel
 Libs/               Vendored Ace3 libraries, committed to the repo
 Libs/embeds.xml     Pulls in the Ace3 libraries listed below
@@ -125,6 +159,9 @@ same handler threw.
   the *receiver's* setting, so guildmates who configure it differently will
   disagree about who may edit. Moving the threshold into the synced guild
   data would fix this properly.
+- **The auction house panel rides on Blizzard internals.** See above: it
+  degrades to filling the search box rather than erroring, but a patch can
+  still make one-click search stop working until this is updated.
 - No minimap button, no low-stock alerts, no addon-comm compression. Very
   large guild banks may sync slowly over guild chat's rate limits (AceComm
   chunks, but chunks are throttled).
@@ -135,7 +172,8 @@ same handler threw.
 - Request queue: members request an item + qty; officers see a queue
   instead of guild-chat spam.
 - Auto-build shopping list entries from a profession/crafting queue.
-- Auction house price lookups (TSM/Auctionator hooks) on shopping list rows.
+- Auction house price lookups (TSM/Auctionator hooks) on shopping list rows
+  — the AH panel shows what's missing, but no prices.
 - Withdrawal log / audit trail.
 - Export shopping list to Discord/clipboard.
 - Minimap icon (LibDBIcon) and LDB data feed.

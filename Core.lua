@@ -32,9 +32,15 @@ local defaults = {
         -- the shared shopping list. Lower index = higher rank.
         officerRankThreshold = 1,
         autoSyncOnBankOpen = true,
+        autoOpenOnBankOpen = true,
+        showOnAuctionHouse = true,
         lowStockThreshold = 5,
         fontSize = 14,
         debug = false,
+        -- AceGUI's own status table for the main window (width/height/top/left).
+        -- Living in the profile is what makes the window stay where you parked
+        -- it across sessions, which matters now that it opens itself at the bank.
+        window = { width = 560, height = 560 },
     },
 }
 
@@ -58,6 +64,22 @@ function GuildLedger:OnDataUpdated()
     if self.ui then
         self.ui:Refresh()
     end
+    if self.ah then
+        -- UpdateVisibility, not Refresh: a first item added while the auction
+        -- house is open has to make the panel appear, not just repopulate it.
+        self.ah:UpdateVisibility()
+    end
+end
+
+-- True while the guild bank window is open. GUILDBANKFRAME_OPENED is dead on
+-- retail (see BankScan.lua), so the interaction manager is the only honest
+-- answer; the nil guards keep this working if that API moves again.
+function GuildLedger:IsAtGuildBanker()
+    local mgr = C_PlayerInteractionManager
+    if not (mgr and mgr.IsInteractingWithNpcOfType and Enum and Enum.PlayerInteractionType) then
+        return false
+    end
+    return mgr.IsInteractingWithNpcOfType(Enum.PlayerInteractionType.GuildBanker) and true or false
 end
 
 -- For a second or two after login the client knows you're in a guild
@@ -260,10 +282,7 @@ function GuildLedger:PrintStatus()
         self:Print(("shopping list: %d entry(ies)"):format(listed))
     end
 
-    local atBanker = C_PlayerInteractionManager
-        and C_PlayerInteractionManager.IsInteractingWithNpcOfType
-        and C_PlayerInteractionManager.IsInteractingWithNpcOfType(Enum.PlayerInteractionType.GuildBanker)
-    self:Print("at guild banker: " .. tostring(atBanker))
+    self:Print("at guild banker: " .. tostring(self:IsAtGuildBanker()))
     self:Print(("api: GetNumGuildBankTabs=%s GetGuildBankItemLink=%s tabs=%s"):format(
         tostring(GetNumGuildBankTabs ~= nil),
         tostring(GetGuildBankItemLink ~= nil),

@@ -15,6 +15,11 @@ local DEFAULT_FONT_SIZE = 14
 local bodyFont = _G["GuildLedgerFontBody"] or CreateFont("GuildLedgerFontBody")
 local headerFont = _G["GuildLedgerFontHeader"] or CreateFont("GuildLedgerFontHeader")
 
+-- The auction house panel draws its own rows but shares these, so the font
+-- size option applies there too.
+ns.bodyFont = bodyFont
+ns.headerFont = headerFont
+
 local function CurrentFontSize()
     if GuildLedger.db then
         return GuildLedger.db.profile.fontSize or DEFAULT_FONT_SIZE
@@ -41,6 +46,9 @@ function UI:SetFontSize(size)
     GuildLedger.db.profile.fontSize = size
     self:ApplyFont()
     self:Refresh()
+    if GuildLedger.ah then
+        GuildLedger.ah:Refresh()
+    end
 end
 
 -- AceGUI pools and reuses widget frames, so the stripe texture is created once
@@ -105,6 +113,7 @@ local function ItemNameFromLink(itemLink)
     if not itemLink then return "" end
     return itemLink:match("%[(.-)%]") or itemLink
 end
+ns.ItemNameFromLink = ItemNameFromLink
 
 -- needle must already be lowercased by the caller; this runs once per slot
 -- per keystroke, so it stays off the hot path.
@@ -244,6 +253,12 @@ local function BuildBankTab(container)
     end
 end
 
+-- Shopping list column widths, as fractions of the row. AceGUI's Button insets
+-- its label by 15px on each side, so 30px of any button is pure padding: at the
+-- old 0.13 the Remove button had ~38px left for the word and rendered as "Re...".
+-- Keep the total a little under 1.0 or Flow rounding wraps the last column.
+local COL_ITEM, COL_HAVE, COL_WANT, COL_REMOVE = 0.34, 0.27, 0.14, 0.22
+
 local function BuildShoppingTab(container)
     local scroll = AceGUI:Create("ScrollFrame")
     scroll:SetLayout("List")
@@ -287,20 +302,20 @@ local function BuildShoppingTab(container)
 
     local head = NewRow(scroll, nil)
     local hItem = NewLabel("Item", headerFont)
-    hItem:SetRelativeWidth(0.40)
+    hItem:SetRelativeWidth(COL_ITEM)
     head:AddChild(hItem)
-    local hHave = NewLabel("In guild bank", headerFont)
-    hHave:SetRelativeWidth(0.30)
+    local hHave = NewLabel("In bank", headerFont)
+    hHave:SetRelativeWidth(COL_HAVE)
     head:AddChild(hHave)
     local hWant = NewLabel("Wanted", headerFont)
-    hWant:SetRelativeWidth(canEdit and 0.16 or 0.28)
+    hWant:SetRelativeWidth(canEdit and COL_WANT or (COL_WANT + COL_REMOVE))
     head:AddChild(hWant)
 
     for index, entry in ipairs(entries) do
         local row = NewRow(scroll, index)
 
         local item = NewInteractiveLabel(entry.itemLink)
-        item:SetRelativeWidth(0.40)
+        item:SetRelativeWidth(COL_ITEM)
         AddTooltip(item, entry.itemLink)
         row:AddChild(item)
 
@@ -311,7 +326,7 @@ local function BuildShoppingTab(container)
             haveText = ("|cffff5555%d|r  (need %d more)"):format(entry.have, entry.missing)
         end
         local have = NewLabel(haveText)
-        have:SetRelativeWidth(0.30)
+        have:SetRelativeWidth(COL_HAVE)
         row:AddChild(have)
 
         if canEdit then
@@ -319,7 +334,7 @@ local function BuildShoppingTab(container)
             qty.editbox:SetFontObject(bodyFont)
             qty:DisableButton(true)
             qty:SetText(tostring(entry.desired))
-            qty:SetRelativeWidth(0.16)
+            qty:SetRelativeWidth(COL_WANT)
             qty:SetCallback("OnEnterPressed", function(widget, event, text)
                 GuildLedger:SetShoppingListQuantity(entry.itemID, tonumber(text))
                 widget:ClearFocus()
@@ -329,7 +344,7 @@ local function BuildShoppingTab(container)
 
             local remove = AceGUI:Create("Button")
             remove:SetText("Remove")
-            remove:SetRelativeWidth(0.13)
+            remove:SetRelativeWidth(COL_REMOVE)
             remove:SetCallback("OnClick", function()
                 GuildLedger:RemoveShoppingListItem(entry.itemID)
                 UI:Refresh()
@@ -337,10 +352,72 @@ local function BuildShoppingTab(container)
             row:AddChild(remove)
         else
             local qty = NewLabel(tostring(entry.desired))
-            qty:SetRelativeWidth(0.28)
+            qty:SetRelativeWidth(COL_WANT + COL_REMOVE)
             row:AddChild(qty)
         end
     end
+end
+
+-- The AceGUI frame's status bar is decorative here - we never call
+-- SetStatusText - so the toolbar lives inside it. Parenting to statusbg also
+-- puts the buttons a frame level above it, so its OnEnter doesn't eat clicks.
+local function NewToolbarButton(parent, text, width, tooltip, onClick)
+    local button = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+    button:SetSize(width, 20)
+    button:SetText(text)
+    button:SetScript("OnClick", onClick)
+    button:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText(text, 1, 1, 1)
+        GameTooltip:AddLine(tooltip, nil, nil, nil, true)
+        GameTooltip:Show()
+    end)
+    button:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    return button
+end
+
+function UI:CreateToolbar()
+    -- AceGUI's Frame widget exposes statustext but not the status bar frame
+    -- behind it; the fontstring's parent is that bar. Fall back to the window
+    -- itself (same coordinates) if AceGUI ever restructures it.
+    local bar = frame.statustext and frame.statustext:GetParent()
+    local anchorX, anchorY = 4, 0
+    if not bar then
+        bar = frame.frame
+        anchorX, anchorY = 19, 17
+    end
+
+    self.scanButton = NewToolbarButton(bar, "Scan bank", 100,
+        "Re-read every guild bank tab. Only works while the guild bank window is open.",
+        function()
+            GuildLedger:StartBankScan()
+            GuildLedger:Print("Scanning the guild bank...")
+        end)
+    if bar == frame.frame then
+        self.scanButton:SetPoint("BOTTOMLEFT", bar, "BOTTOMLEFT", anchorX, anchorY)
+    else
+        self.scanButton:SetPoint("LEFT", bar, "LEFT", anchorX, anchorY)
+    end
+
+    self.syncButton = NewToolbarButton(bar, "Sync", 80,
+        "Ask the guild for a newer bank snapshot and the current shopping list.",
+        function()
+            if not GuildLedger.guildData then
+                GuildLedger:Print("You're not in a guild.")
+                return
+            end
+            GuildLedger:RequestSync()
+            GuildLedger:Print("Requested a bank and shopping list sync from the guild.")
+        end)
+    self.syncButton:SetPoint("LEFT", self.scanButton, "RIGHT", 4, 0)
+end
+
+-- A scan outside the bank window silently does nothing (the API returns
+-- empties), so the button says why instead of looking broken.
+function UI:UpdateToolbar()
+    if not self.scanButton then return end
+    self.scanButton:SetEnabled(GuildLedger:IsAtGuildBanker())
+    self.syncButton:SetEnabled(GuildLedger.guildData ~= nil)
 end
 
 function UI:Create()
@@ -351,10 +428,14 @@ function UI:Create()
     frame = AceGUI:Create("Frame")
     frame:SetTitle("GuildLedger")
     frame:SetLayout("Fill")
-    frame:SetWidth(560)
-    frame:SetHeight(560)
     frame:SetCallback("OnClose", function(widget) widget:Hide() end)
+    -- Size and position come from the profile, so the window stays where it was
+    -- parked. It opens itself next to the guild bank now, and re-centring on
+    -- top of the bank frame every time would make that worse, not better.
+    frame:SetStatusTable(GuildLedger.db.profile.window)
     frame:Hide()
+
+    self:CreateToolbar()
 
     local tabGroup = AceGUI:Create("TabGroup")
     tabGroup:SetLayout("Fill")
@@ -383,6 +464,7 @@ end
 
 function UI:Refresh()
     if not frame or not frame:IsShown() then return end
+    self:UpdateToolbar()
     self.tabGroup:SelectTab(self.selectedTab or "bank")
 end
 
@@ -394,6 +476,32 @@ function UI:Toggle()
         frame:Show()
         self:Refresh()
     end
+end
+
+-- Auto-open at the guild bank. We only close again if we were the ones who
+-- opened it: a window the player opened by hand before walking up to the
+-- banker is theirs, and shutting it for them would be rude.
+function UI:OnGuildBankOpened()
+    if not GuildLedger.db.profile.autoOpenOnBankOpen then return end
+
+    self:Create()
+    if frame:IsShown() then
+        self.openedForBank = false
+    else
+        self.openedForBank = true
+        frame:Show()
+    end
+    self:Refresh()
+end
+
+function UI:OnGuildBankClosed()
+    if not frame then return end
+    if self.openedForBank then
+        self.openedForBank = false
+        frame:Hide()
+        return
+    end
+    self:Refresh()
 end
 
 UI:ApplyFont()
