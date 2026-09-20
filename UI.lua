@@ -130,9 +130,19 @@ ns.ItemNameFromLink = ItemNameFromLink
 -- GetItemInfoInstant parses the link itself instead of consulting the item
 -- cache, so the icon is there on the first draw. GetItemInfo would return nil
 -- for anything the client hasn't seen yet and pop the icons in later.
+-- Memoised because a redraw asks for the same few hundred links every time and
+-- the answer can't change: the icon is a property of the link, not of what the
+-- client happens to have cached. false means "parsed, no icon" - storing nil
+-- would re-parse that link on every pass.
+local iconCache = {}
 local function ItemIcon(itemLink)
     if not itemLink then return nil end
+    local cached = iconCache[itemLink]
+    if cached ~= nil then
+        return cached or nil
+    end
     local _, _, _, _, icon = C_Item.GetItemInfoInstant(itemLink)
+    iconCache[itemLink] = icon or false
     return icon
 end
 ns.ItemIcon = ItemIcon
@@ -150,6 +160,32 @@ ns.IconSize = IconSize
 local function SetItemIcon(widget, itemLink)
     widget:SetImageSize(IconSize(), IconSize())
     widget:SetImage(ItemIcon(itemLink))
+end
+
+-- AceGUI's AddChild lays the container out again for every single child, and
+-- the List layout re-measures every row it has already placed - so filling a
+-- scroll frame one row at a time costs O(rows^2) text measurements. A full
+-- eight-tab bank is several hundred rows, which is where the freeze came from.
+-- Pausing the layout for the fill and running it once at the end makes it
+-- linear. pcall so an error mid-fill can't leave the container permanently
+-- paused, which would silently stop it ever laying out again.
+local function BulkFill(container, fill)
+    container:PauseLayout()
+    local ok, err = pcall(fill)
+    container:ResumeLayout()
+    container:DoLayout()
+    if not ok then error(err, 0) end
+end
+
+-- A rebuild releases the scroll frame and builds a new one, which starts at
+-- the top - that's why every refresh threw the list back to the beginning.
+-- AceGUI keeps the scroll offset in a status table it doesn't own, so handing
+-- the replacement the same table hands it the old position; FixScroll clamps
+-- it on the layout that follows if the content got shorter.
+local scrollPositions = {}
+local function RememberScroll(scroll, key)
+    scrollPositions[key] = scrollPositions[key] or {}
+    scroll:SetStatusTable(scrollPositions[key])
 end
 
 -- needle must already be lowercased by the caller; this runs once per slot
@@ -174,13 +210,103 @@ local function AddSpacer(parent, height)
     return spacer
 end
 
+-- AceGUI ships nothing that just puts cells side by side. Flow is the closest,
+-- and it pads: three pixels above every row, and it stacks children on a
+-- hardcoded per-widget "alignoffset" rather than centring them, so in a 23px
+-- row the item text sat 4.5px below the top and 1.5 above the bottom - the
+-- sag, and the wasted space with it.
+-- This is one row of cells, each centred on the tallest, with nothing added
+-- around it. Rows come out flush, the same as the bank tab's, where the stripe
+-- is what separates them.
+local ROW_LAYOUT = "GuildLedgerRow"
+AceGUI:RegisterLayout(ROW_LAYOUT, function(content, children)
+    local width = content.width or content:GetWidth() or 0
+
+    -- Widths first, in their own pass: setting a cell's width re-measures its
+    -- text, so any height read before this is the height the cell had at
+    -- whatever width it was last given - 200px, for a cell built this frame.
+    for i = 1, #children do
+        local child = children[i]
+        if child.width == "relative" then
+            child:SetWidth(width * (child.relWidth or 1))
+        elseif child.width == "fill" then
+            child:SetWidth(width)
+        end
+        if child.DoLayout then
+            child:DoLayout()
+        end
+    end
+
+    local height = 0
+    for i = 1, #children do
+        local frame = children[i].frame
+        height = math.max(height, frame.height or frame:GetHeight() or 0)
+    end
+
+    local x = 0
+    for i = 1, #children do
+        local frame = children[i].frame
+        local cellHeight = frame.height or frame:GetHeight() or 0
+        -- Floored, so a cell an odd number of pixels shorter than the row
+        -- lands on a whole pixel rather than blurring across two.
+        frame:ClearAllPoints()
+        frame:SetPoint("TOPLEFT", content, "TOPLEFT", x, -math.floor((height - cellHeight) / 2))
+        frame:Show()
+        x = x + (frame.width or frame:GetWidth() or 0)
+    end
+
+    if content.obj.LayoutFinished then
+        content.obj:LayoutFinished(nil, height)
+    end
+end)
+
 local function NewRow(parent, index)
     local row = AceGUI:Create("SimpleGroup")
-    row:SetLayout("Flow")
+    row:SetLayout(ROW_LAYOUT)
     row:SetFullWidth(true)
     parent:AddChild(row)
     SetStripe(row, index)
     return row
+end
+
+-- Split out so a shopping-list edit can re-text a row that is already on
+-- screen instead of the tab being rebuilt around it.
+-- The annotation is grey and sits after the count, so it reads as a note on
+-- the row rather than competing with the item link's own quality colour. It
+-- says how many are wanted, so the bank tab answers "do I still need this?"
+-- without a trip to the other tab.
+local function BankRowText(item, desired)
+    local text = ("%s  x%d"):format(item.itemLink, item.count or 0)
+    if desired then
+        text = text .. ("   |cff888888on list, %d wanted|r"):format(desired)
+    end
+    return text
+end
+
+-- One rebuild per keystroke made typing in a big bank feel like the window was
+-- fighting back. The filter only has to be right once the typing stops.
+local SEARCH_DEBOUNCE = 0.25
+
+function UI:ScheduleFilterRefresh()
+    if self.filterTimer then
+        self.filterTimer:Cancel()
+    end
+    self.filterTimer = C_Timer.NewTimer(SEARCH_DEBOUNCE, function()
+        UI.filterTimer = nil
+        -- Refreshing rebuilds the tab and destroys the search box, so record
+        -- where the cursor was and flag the box that replaces it to take focus
+        -- back, so typing carries on uninterrupted and in the same place.
+        -- Only if the box still has focus: the window can have been closed or
+        -- the tab switched during the quarter second we waited, and grabbing
+        -- focus then would be the addon typing over whatever came next.
+        local box = UI.bankSearchBox
+        local editbox = box and box.editbox
+        if editbox and editbox:HasFocus() then
+            UI.restoreBankSearchFocus = true
+            UI.bankSearchCursor = editbox:GetCursorPosition()
+        end
+        UI:Refresh()
+    end)
 end
 
 local function BuildBankTab(container)
@@ -190,12 +316,21 @@ local function BuildBankTab(container)
     scroll:SetFullHeight(true)
     container:AddChild(scroll)
 
+    -- Dropped on every rebuild: the widgets these point at have been released
+    -- back to AceGUI's pool and will come back as somebody else's rows.
+    UI.bankRows = nil
+    UI.bankSearchBox = nil
+
     if not GuildLedger.guildData then
         scroll:AddChild(NewLabel("You're not in a guild."))
         return
     end
 
+    RememberScroll(scroll, "bank")
+
     local filter = UI.bankFilter or ""
+
+    BulkFill(scroll, function()
 
     local search = AceGUI:Create("EditBox")
     search.editbox:SetFontObject(bodyFont)
@@ -205,17 +340,16 @@ local function BuildBankTab(container)
     search:SetText(filter)
     search:SetCallback("OnTextChanged", function(widget, event, text)
         UI.bankFilter = text
-        -- Refreshing rebuilds the tab and destroys this box, so flag the one
-        -- that replaces it to take focus back and keep typing uninterrupted.
-        UI.restoreBankSearchFocus = true
-        UI:Refresh()
+        UI:ScheduleFilterRefresh()
     end)
     scroll:AddChild(search)
+    UI.bankSearchBox = search
 
     if UI.restoreBankSearchFocus then
         UI.restoreBankSearchFocus = nil
         search:SetFocus()
-        search.editbox:SetCursorPosition(#filter)
+        search.editbox:SetCursorPosition(UI.bankSearchCursor or #filter)
+        UI.bankSearchCursor = nil
     end
 
     AddSpacer(scroll, 12)
@@ -240,6 +374,7 @@ local function BuildBankTab(container)
     end
     table.sort(tabIndices)
 
+    local rows = {}
     local rowIndex, shown, total = 0, 0, 0
     for _, tabIndex in ipairs(tabIndices) do
         local tab = bank.tabs[tabIndex]
@@ -268,23 +403,21 @@ local function BuildBankTab(container)
                 rowIndex = rowIndex + 1
                 shown = shown + 1
 
-                -- Grey, and after the count, so it reads as an annotation on
-                -- the row rather than competing with the item link's own
-                -- quality colour. Says how many are wanted, so the bank tab
-                -- answers "do I still need this?" without a trip to the other
-                -- tab.
-                local listed = item.itemID and list[item.itemID]
-                local text = ("%s  x%d"):format(item.itemLink, item.count or 0)
-                if listed then
-                    text = text .. ("   |cff888888on list, %d wanted|r"):format(listed.desired)
-                end
+                local itemID = item.itemID
+                local entry = itemID and list[itemID]
+                local desired = entry and entry.desired or nil
 
-                local row = NewInteractiveLabel(text)
+                local row = NewInteractiveLabel(BankRowText(item, desired))
                 row:SetFullWidth(true)
                 SetItemIcon(row, item.itemLink)
                 SetStripe(row, rowIndex)
                 AddTooltip(row, item.itemLink)
                 row:SetCallback("OnClick", function()
+                    -- Read the list now rather than trusting what it held when
+                    -- the row was drawn. Rows outlive a list edit these days,
+                    -- so an entry captured at build time goes stale the moment
+                    -- the item is added from anywhere else.
+                    local listed = itemID and GuildLedger:GetShoppingList()[itemID]
                     -- A click is shorthand for "add this", not "reset this":
                     -- it carries no quantity of its own, so it must not
                     -- clobber a target someone deliberately typed in.
@@ -298,9 +431,18 @@ local function BuildBankTab(container)
                     end
                 end)
                 scroll:AddChild(row)
+
+                rows[#rows + 1] = {
+                    widget = row,
+                    item = item,
+                    itemID = itemID,
+                    desired = desired,
+                }
             end
         end
     end
+
+    UI.bankRows = rows
 
     if filter ~= "" then
         if shown == 0 then
@@ -309,6 +451,34 @@ local function BuildBankTab(container)
             header:SetText(("Showing %d of %d item stacks."):format(shown, total))
         end
     end
+
+    end)
+end
+
+-- The repaint that stands in for a rebuild when only the shopping list moved.
+-- A list edit can't change which bank slots exist, only the annotation on the
+-- rows drawn for them, so the rows stay put and the handful whose annotation
+-- actually differs get new text. Label:SetText re-measures its own frame but
+-- never asks the parent to lay out again, so nothing moves and the scroll
+-- position is not touched at all.
+-- Returns false when there are no rows to repaint - no guild, or the tab was
+-- never built - so the caller can fall back to a rebuild.
+function UI:RepaintBankRows()
+    local rows = self.bankRows
+    if not rows then return false end
+
+    local list = GuildLedger:GetShoppingList()
+    for i = 1, #rows do
+        local row = rows[i]
+        local entry = row.itemID and list[row.itemID]
+        local desired = entry and entry.desired or nil
+        if desired ~= row.desired then
+            row.desired = desired
+            row.widget:SetText(BankRowText(row.item, desired))
+        end
+    end
+
+    return true
 end
 
 -- Shopping list column widths, as fractions of the row. AceGUI's Button insets
@@ -316,8 +486,22 @@ end
 -- is why the remove button says "X" rather than "Remove": at any width narrow
 -- enough to leave the item name room, the word rendered as "Re...". The tooltip
 -- carries the meaning instead.
--- Keep the total a little under 1.0 or Flow rounding wraps the last column.
+-- The total is a little under 1.0, which is now simply a right margin: the row
+-- layout places cells left to right and never wraps, where Flow used to drop
+-- the last column onto a second line if rounding pushed the total over.
 local COL_ITEM, COL_HAVE, COL_WANT, COL_REMOVE = 0.60, 0.12, 0.15, 0.10
+
+-- AceGUI sizes an EditBox to leave room for a label even when there is no
+-- label to show - 26px of frame around 17px of text - and a Button to 24. The
+-- row is as tall as the tallest thing in it, so those two set the row height
+-- on their own, and a row holding one line of text came to 28px.
+-- These are the tallest cells in the row, so this is the row height. 20 is the
+-- same floor the toolbar buttons use, and about as short as InputBoxTemplate's
+-- art reads at. The height is reset by OnAcquire, so nothing leaks into the
+-- widget pool.
+local function ControlHeight()
+    return math.max(20, CurrentFontSize() + 6)
+end
 
 -- Stock against target, green once the target is met and red while it isn't.
 -- Just "35 /" because the quantity box sitting next to it is the target, and
@@ -334,6 +518,9 @@ local function BuildShoppingTab(container)
     scroll:SetFullWidth(true)
     scroll:SetFullHeight(true)
     container:AddChild(scroll)
+    RememberScroll(scroll, "list")
+
+    BulkFill(scroll, function()
 
     -- No guild check: the list is this character's own, and the bank column
     -- simply reads 0 until there's a scan to compare against.
@@ -370,6 +557,8 @@ local function BuildShoppingTab(container)
     hStock:SetRelativeWidth(COL_HAVE + COL_WANT)
     head:AddChild(hStock)
 
+    local controlHeight = ControlHeight()
+
     for index, entry in ipairs(entries) do
         local row = NewRow(scroll, index)
 
@@ -388,9 +577,13 @@ local function BuildShoppingTab(container)
 
         local qty = AceGUI:Create("EditBox")
         qty.editbox:SetFontObject(bodyFont)
+        -- The default 3px top and bottom text insets are sized for the 26px
+        -- box; at this height they would clip the descenders.
+        qty.editbox:SetTextInsets(0, 0, 1, 1)
         qty:DisableButton(true)
         qty:SetText(tostring(entry.desired))
         qty:SetRelativeWidth(COL_WANT)
+        qty:SetHeight(controlHeight)
         qty:SetCallback("OnEnterPressed", function(widget, event, text)
             GuildLedger:SetShoppingListQuantity(entry.itemID, tonumber(text))
             widget:ClearFocus()
@@ -401,6 +594,7 @@ local function BuildShoppingTab(container)
         local remove = AceGUI:Create("Button")
         remove:SetText("X")
         remove:SetRelativeWidth(COL_REMOVE)
+        remove:SetHeight(controlHeight)
         AddTextTooltip(remove, "Remove",
             ("Take %s off your shopping list."):format(ItemNameFromLink(entry.itemLink)))
         remove:SetCallback("OnClick", function()
@@ -409,6 +603,8 @@ local function BuildShoppingTab(container)
         end)
         row:AddChild(remove)
     end
+
+    end)
 end
 
 -- The AceGUI frame's status bar is decorative here - we never call
@@ -515,9 +711,50 @@ function UI:Create()
     self.tabGroup = tabGroup
 end
 
-function UI:Refresh()
+-- Two kinds of change reach the window, and they cost wildly different
+-- amounts to draw:
+--   "list"      a shopping-list edit. Which rows exist is unchanged; only the
+--               "on list" annotation on bank rows moved, so the bank tab
+--               repaints those in place.
+--   anything else  a scan, a sync, a guild change, a font size change. The
+--               rows themselves are different and have to be built again.
+-- Rebuilding for a list edit is what froze the window on every click and threw
+-- the scroll back to the top, which is the whole reason for the distinction.
+local REBUILD_UNNEEDED = "list"
+
+-- Bursts are the norm - a scan sends a message per tab, and RefreshGuildData
+-- runs on every roster update - so the work is coalesced onto the next frame
+-- and done once. A rebuild asked for anywhere in the burst wins over a
+-- repaint: it is the strictly more thorough of the two.
+function UI:Refresh(reason)
     if not frame or not frame:IsShown() then return end
+
+    if reason ~= REBUILD_UNNEEDED then
+        self.pendingRebuild = true
+    end
+
+    if self.refreshScheduled then return end
+    self.refreshScheduled = true
+    C_Timer.After(0, function() UI:RunRefresh() end)
+end
+
+function UI:RunRefresh()
+    self.refreshScheduled = nil
+    local rebuild = self.pendingRebuild
+    self.pendingRebuild = nil
+
+    -- The window can have been closed between the request and this frame.
+    if not frame or not frame:IsShown() then return end
+
     self:UpdateToolbar()
+
+    -- The shopping list tab is left to rebuild even for a list edit: there the
+    -- rows really do appear, disappear and re-sort. It is tens of rows, not
+    -- the hundreds the bank tab draws.
+    if not rebuild and (self.selectedTab or "bank") == "bank" and self:RepaintBankRows() then
+        return
+    end
+
     self.tabGroup:SelectTab(self.selectedTab or "bank")
 end
 
