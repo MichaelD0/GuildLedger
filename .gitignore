@@ -1,7 +1,3 @@
-# Ace3 libraries - vendored into Libs/ by the packager via .pkgmeta
-Libs/*
-!Libs/embeds.xml
-
 # Compiled Lua sources
 luac.out
 

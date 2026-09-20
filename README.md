@@ -74,29 +74,27 @@ Comm.lua            Broadcasts/receives bank + shopping list snapshots (AceComm)
 ShoppingList.lua    CRUD + have/need diff logic for the shared shopping list
 UI.lua              AceGUI window: Bank Inventory tab, Shopping List tab
 Config.lua          AceConfig options panel
+Libs/               Vendored Ace3 libraries, committed to the repo
 Libs/embeds.xml     Pulls in the Ace3 libraries listed below
 .pkgmeta            Externals so a packager (CurseForge/WowAce/BigWigs
-                    packager) can vendor Ace3 automatically
+                    packager) can re-vendor Ace3 when updating
 ```
 
-## Getting Ace3 into `Libs/`
+## Ace3 libraries
 
 The addon depends on Ace3 (AceAddon, AceEvent, AceConsole, AceDB,
 AceSerializer, AceComm, AceGUI, AceConfig) plus CallbackHandler-1.0 and
-LibStub. `.pkgmeta` lists them as externals, and `Libs/` is gitignored apart
-from `embeds.xml`, so a source checkout does **not** include them:
+LibStub. These are **committed under `Libs/`**, so a fresh clone can be
+dropped straight into `Interface/AddOns/` and will load as-is — no packager
+or extra download step.
 
-- **Easiest:** run this repo through the
-  [BigWigs packager](https://github.com/BigWigsMods/packager) (what
-  CurseForge/Wago use) — it reads `.pkgmeta` and checks out every library
-  into `Libs/` automatically.
-- **Manual:** download each library's current source from
-  [wowace.com](https://www.wowace.com/projects/ace3/files) or its SVN repo
-  and drop it into the matching `Libs/<LibName>` folder so the paths in
-  `Libs/embeds.xml` resolve.
-
-Without the libraries in place the addon won't load — `LibStub` errors on the
-first line of `Core.lua`.
+`.pkgmeta` still lists every library as an external, which is what a packager
+build (CurseForge/Wago, via the
+[BigWigs packager](https://github.com/BigWigsMods/packager)) uses. To update
+the vendored copies, either let that packager refresh `Libs/` and commit the
+result, or download the current source from
+[wowace.com](https://www.wowace.com/projects/ace3/files) into the matching
+`Libs/<LibName>` folder — keeping the paths in `Libs/embeds.xml` resolvable.
 
 ## Debugging
 
