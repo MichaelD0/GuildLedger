@@ -7,20 +7,6 @@ ns.addon = GuildLedger
 
 GuildLedger.COMM_PREFIX = "GuildLedger1"
 
--- Characters who may always edit the shared shopping list, whatever their
--- guild rank. This is baked into the addon rather than kept in saved
--- variables on purpose: every client validates incoming edits against this
--- same table, so an entry only one person has would be rejected by everyone
--- else.
---
--- A key of "Drakktar" matches that name on any realm; "Drakktar-Ravencrest"
--- matches only that character. Prefer the suffixed form if the name is at all
--- common - the realm suffix is the only thing separating you from a guildmate
--- who picked the same name on a connected realm.
-GuildLedger.ALWAYS_ALLOWED_EDITORS = {
-    ["Drakktar-Illidan"] = true,
-}
-
 local defaults = {
     global = {
         -- Ring buffer of recent trace lines; see GuildLedger:Trace.
@@ -28,13 +14,15 @@ local defaults = {
     },
     factionrealm = {
         guilds = {
-            -- [guildName] = { bank = { tabs = {}, lastScan = 0, lastScannedBy = nil }, shoppingList = {} }
+            -- [guildName] = { bank = { tabs = {}, lastScan = 0, lastScannedBy = nil } }
         },
     },
+    -- The shopping list is yours alone: per character, never broadcast, never
+    -- overwritten by a guildmate. Only the bank is shared.
+    char = {
+        shoppingList = {},
+    },
     profile = {
-        -- Guild rank index (0 = Guild Master) at or below which a player may edit
-        -- the shared shopping list. Lower index = higher rank.
-        officerRankThreshold = 1,
         autoSyncOnBankOpen = true,
         autoOpenOnBankOpen = true,
         showOnAuctionHouse = true,
@@ -154,14 +142,24 @@ function GuildLedger:RefreshGuildData()
     local guilds = self.db.factionrealm.guilds
     guilds[guildName] = guilds[guildName] or {
         bank = { tabs = {}, lastScan = 0, lastScannedBy = nil },
-        shoppingList = {},
     }
     self.guildData = guilds[guildName]
 
+    -- Carry over a list saved back when it was guild-shared, so nobody loses
+    -- what they had typed in. Entries already on this character win.
+    if self.guildData.shoppingList then
+        for itemID, entry in pairs(self.guildData.shoppingList) do
+            if self.db.char.shoppingList[itemID] == nil then
+                self.db.char.shoppingList[itemID] = entry
+            end
+        end
+        self.guildData.shoppingList = nil
+    end
+
     -- Catch up once per session, a few seconds after the guild resolves, so a
-    -- member who was offline for the last edits doesn't sit on a stale list
-    -- until someone happens to change something. RefreshGuildData runs on
-    -- every roster update, hence the guard.
+    -- member who was offline for the last scan doesn't sit on a stale bank
+    -- until someone happens to scan again. RefreshGuildData runs on every
+    -- roster update, hence the guard.
     if not self.requestedInitialSync then
         self.requestedInitialSync = true
         C_Timer.After(INITIAL_SYNC_DELAY, function()
@@ -174,80 +172,6 @@ function GuildLedger:RefreshGuildData()
 
     -- The window may already be open showing "You're not in a guild."
     self:OnDataUpdated()
-end
-
--- Addon message senders arrive as "Name" or "Name-Realm" depending on whether
--- the realm is connected, while the roster always reports "Name-Realm".
--- Comparing on the character name alone makes both forms line up.
-local function ShortName(name)
-    if not name then return nil end
-    return name:match("^[^-]+") or name
-end
-
--- The reverse of ShortName: "Drakktar" becomes "Drakktar-YourRealm". Bare
--- names only ever reach us from our own realm (connected-realm senders always
--- carry a suffix), so filling in the local realm is correct.
-local function FullName(name)
-    if not name then return nil end
-    if name:find("-", 1, true) then return name end
-    local realm = GetNormalizedRealmName()
-    if not realm then return name end
-    return name .. "-" .. realm
-end
-
--- Accepts either style of allowlist key: "Drakktar" matches that name on any
--- realm, "Drakktar-Ravencrest" matches only that character. Both are checked
--- against both forms of the incoming name, since the local player arrives
--- bare (UnitName) and the roster arrives suffixed.
-function GuildLedger:IsAlwaysAllowedEditor(name)
-    if not name then return false end
-    if self.ALWAYS_ALLOWED_EDITORS[name] then return true end
-
-    local full = FullName(name)
-    if full and self.ALWAYS_ALLOWED_EDITORS[full] then return true end
-
-    local short = ShortName(name)
-    return short ~= nil and self.ALWAYS_ALLOWED_EDITORS[short] == true
-end
-
--- Guild rank of another player, from the roster. Only ever called for someone
--- who just sent an addon message, so they are online and therefore present in
--- the roster regardless of the show-offline setting.
-function GuildLedger:GetGuildRankIndexFor(name)
-    local short = ShortName(name)
-    if not short then return nil end
-
-    local numTotal = GetNumGuildMembers()
-    for i = 1, (numTotal or 0) do
-        local rosterName, _, rankIndex = GetGuildRosterInfo(i)
-        if rosterName and ShortName(rosterName) == short then
-            return rankIndex
-        end
-    end
-    return nil
-end
-
--- True if the named player may edit the shared shopping list (rank 0 is the
--- Guild Master; lower index = higher rank). Pass nil for the local player.
--- Senders of addon messages are supplied by the server and can't be forged,
--- so this is meaningful for remote players too, not just a UI courtesy.
-function GuildLedger:CanEditList(sender)
-    if not self.guildName then return false end
-
-    if not sender then
-        if self:IsAlwaysAllowedEditor(UnitName("player")) then return true end
-        if IsGuildLeader() then return true end
-        local _, _, rankIndex = GetGuildInfo("player")
-        return rankIndex ~= nil and rankIndex <= self.db.profile.officerRankThreshold
-    end
-
-    if self:IsAlwaysAllowedEditor(sender) then return true end
-    local rankIndex = self:GetGuildRankIndexFor(sender)
-    return rankIndex ~= nil and rankIndex <= self.db.profile.officerRankThreshold
-end
-
-function GuildLedger:IsOfficer()
-    return self:CanEditList()
 end
 
 -- Trace lines go to saved variables whether or not tracing is being printed,
@@ -291,7 +215,6 @@ end
 function GuildLedger:PrintStatus()
     self:Print("guild: " .. tostring(self.guildName))
     self:Print("guildData: " .. (self.guildData and "bound" or "nil"))
-    self:Print("officer: " .. tostring(self:IsOfficer()))
 
     if self.guildData then
         local bank = self.guildData.bank
@@ -307,11 +230,11 @@ function GuildLedger:PrintStatus()
         else
             self:Print("last scan: never")
         end
-
-        local listed = 0
-        for _ in pairs(self.guildData.shoppingList) do listed = listed + 1 end
-        self:Print(("shopping list: %d entry(ies)"):format(listed))
     end
+
+    local listed = 0
+    for _ in pairs(self:GetShoppingList()) do listed = listed + 1 end
+    self:Print(("shopping list: %d entry(ies) (this character only)"):format(listed))
 
     self:Print(("trace: %d/%d line(s) buffered"):format(#self.db.global.trace, TRACE_MAX))
 
@@ -338,7 +261,7 @@ function GuildLedger:SlashCommand(input)
             return
         end
         self:RequestSync()
-        self:Print("Requested a bank and shopping list sync from the guild.")
+        self:Print("Requested a fresh bank snapshot from the guild.")
     elseif input == "trace" then
         self:Print(("%d of %d trace line(s) buffered."):format(#self.db.global.trace, TRACE_MAX))
         -- Forward slashes on purpose: Lua 5.1 drops the backslash on an

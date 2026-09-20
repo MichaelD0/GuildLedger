@@ -267,13 +267,12 @@ function AH:UpdateVisibility()
     local ahFrame = _G.AuctionHouseFrame
     if not ahFrame then return end
 
-    local hasEntries = GuildLedger.guildData ~= nil
-        and next(GuildLedger.guildData.shoppingList) ~= nil
-
+    -- The db check guards GetShoppingList: this can fire from a hook that
+    -- beat OnInitialize, and Lua's "and" stops before the call.
     local wanted = ahFrame:IsShown()
-        and hasEntries
         and GuildLedger.db and GuildLedger.db.profile.showOnAuctionHouse
         and not self.dismissed
+        and next(GuildLedger:GetShoppingList()) ~= nil
 
     if not wanted then
         if panel then panel:Hide() end
@@ -300,8 +299,9 @@ function AH:HookAuctionHouse()
         -- An X on the panel dismisses it for this visit only.
         AH.dismissed = false
         AH:UpdateVisibility()
-        -- Ask the guild for the current list on arrival so you aren't shopping
-        -- from whatever snapshot you happened to have at login.
+        -- Ask the guild for a fresh bank snapshot on arrival, so the "in bank"
+        -- column isn't quoting whatever you happened to have at login while
+        -- you decide what to buy.
         if GuildLedger.guildData and (GetTime() - lastSyncRequest) > SYNC_REQUEST_COOLDOWN then
             lastSyncRequest = GetTime()
             GuildLedger:RequestSync()
