@@ -223,6 +223,7 @@ local function BuildBankTab(container)
     local needle = filter:lower()
 
     local bank = GuildLedger.guildData.bank
+    local list = GuildLedger:GetShoppingList()
     local header = NewLabel("")
     header:SetFullWidth(true)
     if bank.lastScan and bank.lastScan > 0 then
@@ -267,12 +268,31 @@ local function BuildBankTab(container)
                 rowIndex = rowIndex + 1
                 shown = shown + 1
 
-                local row = NewInteractiveLabel(("%s  x%d"):format(item.itemLink, item.count or 0))
+                -- Grey, and after the count, so it reads as an annotation on
+                -- the row rather than competing with the item link's own
+                -- quality colour. Says how many are wanted, so the bank tab
+                -- answers "do I still need this?" without a trip to the other
+                -- tab.
+                local listed = item.itemID and list[item.itemID]
+                local text = ("%s  x%d"):format(item.itemLink, item.count or 0)
+                if listed then
+                    text = text .. ("   |cff888888on list, %d wanted|r"):format(listed.desired)
+                end
+
+                local row = NewInteractiveLabel(text)
                 row:SetFullWidth(true)
                 SetItemIcon(row, item.itemLink)
                 SetStripe(row, rowIndex)
                 AddTooltip(row, item.itemLink)
                 row:SetCallback("OnClick", function()
+                    -- A click is shorthand for "add this", not "reset this":
+                    -- it carries no quantity of its own, so it must not
+                    -- clobber a target someone deliberately typed in.
+                    if listed then
+                        GuildLedger:Print(("%s is already on your list (%d wanted)."):format(
+                            item.itemLink, listed.desired))
+                        return
+                    end
                     if GuildLedger:AddShoppingListItem(item.itemLink, 1, nil) then
                         GuildLedger:Print(("Added %s to your shopping list."):format(item.itemLink))
                     end
