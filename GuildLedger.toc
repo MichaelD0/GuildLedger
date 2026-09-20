@@ -2,7 +2,7 @@
 ## Title: GuildLedger
 ## Notes: Scans the guild bank, syncs it across the guild, and keeps a personal shopping list of what's needed.
 ## Author: GuildLedger contributors
-## Version: 0.2.0
+## Version: 0.3.0
 ## SavedVariables: GuildLedgerDB
 ## DefaultState: enabled
 ## X-Curse-Project-Name: GuildLedger
