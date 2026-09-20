@@ -361,6 +361,9 @@ local function BuildShoppingTab(container)
 
         local have = NewLabel(StockText(entry))
         have:SetRelativeWidth(COL_HAVE)
+        -- Right-justified so "35 /" ends flush against the quantity box
+        -- rather than floating at the left of a cell sized for four digits.
+        have:SetJustifyH("RIGHT")
         row:AddChild(have)
 
         local qty = AceGUI:Create("EditBox")
