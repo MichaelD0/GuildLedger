@@ -7,6 +7,20 @@ ns.addon = GuildLedger
 
 GuildLedger.COMM_PREFIX = "GuildLedger1"
 
+-- Characters who may always edit the shared shopping list, whatever their
+-- guild rank. This is baked into the addon rather than kept in saved
+-- variables on purpose: every client validates incoming edits against this
+-- same table, so an entry only one person has would be rejected by everyone
+-- else.
+--
+-- A key of "Drakktar" matches that name on any realm; "Drakktar-Ravencrest"
+-- matches only that character. Prefer the suffixed form if the name is at all
+-- common - the realm suffix is the only thing separating you from a guildmate
+-- who picked the same name on a connected realm.
+GuildLedger.ALWAYS_ALLOWED_EDITORS = {
+    ["Drakktar"] = true,
+}
+
 local defaults = {
     factionrealm = {
         guilds = {
@@ -19,6 +33,7 @@ local defaults = {
         officerRankThreshold = 1,
         autoSyncOnBankOpen = true,
         lowStockThreshold = 5,
+        fontSize = 14,
         debug = false,
     },
 }
@@ -113,13 +128,78 @@ function GuildLedger:RefreshGuildData()
     self:OnDataUpdated()
 end
 
--- True if the player currently holds a guild rank allowed to edit the shared
--- shopping list (rank 0 is the Guild Master; lower index = higher rank).
-function GuildLedger:IsOfficer()
+-- Addon message senders arrive as "Name" or "Name-Realm" depending on whether
+-- the realm is connected, while the roster always reports "Name-Realm".
+-- Comparing on the character name alone makes both forms line up.
+local function ShortName(name)
+    if not name then return nil end
+    return name:match("^[^-]+") or name
+end
+
+-- The reverse of ShortName: "Drakktar" becomes "Drakktar-YourRealm". Bare
+-- names only ever reach us from our own realm (connected-realm senders always
+-- carry a suffix), so filling in the local realm is correct.
+local function FullName(name)
+    if not name then return nil end
+    if name:find("-", 1, true) then return name end
+    local realm = GetNormalizedRealmName()
+    if not realm then return name end
+    return name .. "-" .. realm
+end
+
+-- Accepts either style of allowlist key: "Drakktar" matches that name on any
+-- realm, "Drakktar-Ravencrest" matches only that character. Both are checked
+-- against both forms of the incoming name, since the local player arrives
+-- bare (UnitName) and the roster arrives suffixed.
+function GuildLedger:IsAlwaysAllowedEditor(name)
+    if not name then return false end
+    if self.ALWAYS_ALLOWED_EDITORS[name] then return true end
+
+    local full = FullName(name)
+    if full and self.ALWAYS_ALLOWED_EDITORS[full] then return true end
+
+    local short = ShortName(name)
+    return short ~= nil and self.ALWAYS_ALLOWED_EDITORS[short] == true
+end
+
+-- Guild rank of another player, from the roster. Only ever called for someone
+-- who just sent an addon message, so they are online and therefore present in
+-- the roster regardless of the show-offline setting.
+function GuildLedger:GetGuildRankIndexFor(name)
+    local short = ShortName(name)
+    if not short then return nil end
+
+    local numTotal = GetNumGuildMembers()
+    for i = 1, (numTotal or 0) do
+        local rosterName, _, rankIndex = GetGuildRosterInfo(i)
+        if rosterName and ShortName(rosterName) == short then
+            return rankIndex
+        end
+    end
+    return nil
+end
+
+-- True if the named player may edit the shared shopping list (rank 0 is the
+-- Guild Master; lower index = higher rank). Pass nil for the local player.
+-- Senders of addon messages are supplied by the server and can't be forged,
+-- so this is meaningful for remote players too, not just a UI courtesy.
+function GuildLedger:CanEditList(sender)
     if not self.guildName then return false end
-    if IsGuildLeader() then return true end
-    local _, _, rankIndex = GetGuildInfo("player")
+
+    if not sender then
+        if self:IsAlwaysAllowedEditor(UnitName("player")) then return true end
+        if IsGuildLeader() then return true end
+        local _, _, rankIndex = GetGuildInfo("player")
+        return rankIndex ~= nil and rankIndex <= self.db.profile.officerRankThreshold
+    end
+
+    if self:IsAlwaysAllowedEditor(sender) then return true end
+    local rankIndex = self:GetGuildRankIndexFor(sender)
     return rankIndex ~= nil and rankIndex <= self.db.profile.officerRankThreshold
+end
+
+function GuildLedger:IsOfficer()
+    return self:CanEditList()
 end
 
 -- Prints only when tracing is on (/gledger debug). Kept cheap so Debug calls

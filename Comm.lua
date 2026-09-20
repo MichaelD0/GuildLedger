@@ -6,6 +6,10 @@ local MSG_BANK_SNAPSHOT = "BANK"
 local MSG_LIST_SNAPSHOT = "LIST"
 local MSG_SYNC_REQUEST = "REQ"
 
+-- Bank snapshots are accepted from anyone: a scan is just an observation, and
+-- whoever is standing at the banker is the only one who can make it. Shopping
+-- list snapshots are rank-checked on receipt instead - see OnCommReceived.
+--
 -- Broadcasts are last-writer-wins: whoever has the newest lastScan timestamp
 -- (for the bank) wins on every client that receives it. Good enough for a
 -- guild bank that isn't being edited by two officers in the same second;
@@ -44,6 +48,14 @@ function GuildLedger:OnCommReceived(prefix, message, distribution, sender)
             self:SendMessage("GuildLedger_BankUpdated")
         end
     elseif msgType == MSG_LIST_SNAPSHOT then
+        -- The real enforcement point. The checks in ShoppingList.lua only stop
+        -- an unmodified client from sending edits; this stops a modified one
+        -- from having them accepted, because the sender is supplied by the
+        -- server rather than by the message.
+        if not self:CanEditList(sender) then
+            self:Debug("rejected shopping list from %s: not allowed to edit", tostring(sender))
+            return
+        end
         self.guildData.shoppingList = data
         self:SendMessage("GuildLedger_ListUpdated")
     elseif msgType == MSG_SYNC_REQUEST then
