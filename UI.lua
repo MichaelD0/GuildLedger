@@ -439,6 +439,25 @@ end
 -- Keep the total a little under 1.0 or Flow rounding wraps the last column.
 local COL_ITEM, COL_HAVE, COL_WANT, COL_REMOVE = 0.60, 0.12, 0.15, 0.10
 
+-- AceGUI sizes an EditBox to leave room for a label even when there is no
+-- label to show - 26px of frame around 17px of text - and a Button to 24, and
+-- Flow then sizes the row to the tallest thing in it. That made a shopping
+-- list row 28px tall to hold one line. Sizing both controls to the text, the
+-- way the icons already do, brings it to 23. 20 is the same floor the toolbar
+-- buttons use, and is about as short as InputBoxTemplate's art reads at.
+local function ControlHeight()
+    return math.max(20, CurrentFontSize() + 6)
+end
+
+-- alignoffset is the line Flow centres a row on. AceGUI hardcodes it to 12 for
+-- an EditBox, measured from the 26px frame, so it has to be re-centred with
+-- the height or the row is padded back out to make room for the old one.
+-- Both are reset by OnAcquire, so nothing leaks into the widget pool.
+local function Compact(widget, height)
+    widget:SetHeight(height)
+    widget.alignoffset = height / 2
+end
+
 -- Stock against target, green once the target is met and red while it isn't.
 -- Just "35 /" because the quantity box sitting next to it is the target, and
 -- printing it twice helps nobody. Replaces "35  (need 165 more)" with the same
@@ -493,6 +512,8 @@ local function BuildShoppingTab(container)
     hStock:SetRelativeWidth(COL_HAVE + COL_WANT)
     head:AddChild(hStock)
 
+    local controlHeight = ControlHeight()
+
     for index, entry in ipairs(entries) do
         local row = NewRow(scroll, index)
 
@@ -511,9 +532,13 @@ local function BuildShoppingTab(container)
 
         local qty = AceGUI:Create("EditBox")
         qty.editbox:SetFontObject(bodyFont)
+        -- The default 3px top and bottom text insets are sized for the 26px
+        -- box; at this height they would clip the descenders.
+        qty.editbox:SetTextInsets(0, 0, 1, 1)
         qty:DisableButton(true)
         qty:SetText(tostring(entry.desired))
         qty:SetRelativeWidth(COL_WANT)
+        Compact(qty, controlHeight)
         qty:SetCallback("OnEnterPressed", function(widget, event, text)
             GuildLedger:SetShoppingListQuantity(entry.itemID, tonumber(text))
             widget:ClearFocus()
@@ -524,6 +549,7 @@ local function BuildShoppingTab(container)
         local remove = AceGUI:Create("Button")
         remove:SetText("X")
         remove:SetRelativeWidth(COL_REMOVE)
+        Compact(remove, controlHeight)
         AddTextTooltip(remove, "Remove",
             ("Take %s off your shopping list."):format(ItemNameFromLink(entry.itemLink)))
         remove:SetCallback("OnClick", function()
