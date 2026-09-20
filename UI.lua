@@ -7,6 +7,88 @@ GuildLedger.ui = UI
 
 local frame
 
+local DEFAULT_FONT_SIZE = 14
+
+-- One font object per role, shared by every widget the addon creates.
+-- FontStrings track their font object, so resizing these restyles the whole
+-- window; the rebuild on Refresh only exists to re-measure row heights.
+local bodyFont = _G["GuildLedgerFontBody"] or CreateFont("GuildLedgerFontBody")
+local headerFont = _G["GuildLedgerFontHeader"] or CreateFont("GuildLedgerFontHeader")
+
+local function CurrentFontSize()
+    if GuildLedger.db then
+        return GuildLedger.db.profile.fontSize or DEFAULT_FONT_SIZE
+    end
+    return DEFAULT_FONT_SIZE
+end
+
+function UI:ApplyFont()
+    local size = CurrentFontSize()
+
+    local path, _, flags = GameFontHighlight:GetFont()
+    bodyFont:SetFont(path, size, flags)
+    bodyFont:SetTextColor(GameFontHighlight:GetTextColor())
+    bodyFont:SetJustifyH("LEFT")
+
+    local hpath, _, hflags = GameFontNormal:GetFont()
+    headerFont:SetFont(hpath, size + 2, hflags)
+    headerFont:SetTextColor(GameFontNormal:GetTextColor())
+    headerFont:SetJustifyH("LEFT")
+end
+
+-- Called from the options panel.
+function UI:SetFontSize(size)
+    GuildLedger.db.profile.fontSize = size
+    self:ApplyFont()
+    self:Refresh()
+end
+
+-- AceGUI pools and reuses widget frames, so the stripe texture is created once
+-- per frame and cached on it. Creating one per row would leak a texture on
+-- every refresh. Pass no index to hide the stripe on a reused widget.
+local function SetStripe(widget, index)
+    local f = widget.frame
+    if not f then return end
+
+    local tex = f.guildLedgerStripe
+    if not tex then
+        tex = f:CreateTexture(nil, "BACKGROUND")
+        tex:SetPoint("TOPLEFT")
+        tex:SetPoint("BOTTOMRIGHT")
+        f.guildLedgerStripe = tex
+    end
+
+    if not index then
+        tex:Hide()
+        return
+    end
+
+    if index % 2 == 1 then
+        tex:SetColorTexture(1, 1, 1, 0.05)
+    else
+        tex:SetColorTexture(0, 0, 0, 0.22)
+    end
+    tex:Show()
+end
+
+-- Font before text, always: Label:SetText measures the string to set its own
+-- height, so setting the font afterwards leaves the row the wrong size.
+local function NewLabel(text, font)
+    local widget = AceGUI:Create("Label")
+    widget:SetFontObject(font or bodyFont)
+    widget:SetText(text or "")
+    SetStripe(widget, nil)
+    return widget
+end
+
+local function NewInteractiveLabel(text)
+    local widget = AceGUI:Create("InteractiveLabel")
+    widget:SetFontObject(bodyFont)
+    widget:SetText(text or "")
+    SetStripe(widget, nil)
+    return widget
+end
+
 local function AddTooltip(widget, itemLink)
     widget:SetCallback("OnEnter", function(w)
         GameTooltip:SetOwner(w.frame, "ANCHOR_RIGHT")
@@ -14,6 +96,45 @@ local function AddTooltip(widget, itemLink)
         GameTooltip:Show()
     end)
     widget:SetCallback("OnLeave", function() GameTooltip:Hide() end)
+end
+
+-- Item links always carry the display name in brackets. Reading it from the
+-- link avoids GetItemInfo, which returns nil for anything not in the client's
+-- cache yet and would make matches come and go as the cache fills.
+local function ItemNameFromLink(itemLink)
+    if not itemLink then return "" end
+    return itemLink:match("%[(.-)%]") or itemLink
+end
+
+-- needle must already be lowercased by the caller; this runs once per slot
+-- per keystroke, so it stays off the hot path.
+local function MatchesFilter(itemLink, needle)
+    if needle == "" then return true end
+    -- Plain find, so a filter like "Flask (" can't blow up as a Lua pattern.
+    return ItemNameFromLink(itemLink):lower():find(needle, 1, true) ~= nil
+end
+
+-- AceGUI's List layout packs children flush against each other, so vertical
+-- breathing room has to be an explicit widget. SetHeight must follow SetText,
+-- which otherwise sizes the label to the string.
+local function AddSpacer(parent, height)
+    local spacer = AceGUI:Create("Label")
+    spacer:SetFontObject(bodyFont)
+    spacer:SetText(" ")
+    spacer:SetFullWidth(true)
+    spacer:SetHeight(height or 10)
+    SetStripe(spacer, nil)
+    parent:AddChild(spacer)
+    return spacer
+end
+
+local function NewRow(parent, index)
+    local row = AceGUI:Create("SimpleGroup")
+    row:SetLayout("Flow")
+    row:SetFullWidth(true)
+    parent:AddChild(row)
+    SetStripe(row, index)
+    return row
 end
 
 local function BuildBankTab(container)
@@ -24,14 +145,39 @@ local function BuildBankTab(container)
     container:AddChild(scroll)
 
     if not GuildLedger.guildData then
-        local label = AceGUI:Create("Label")
-        label:SetText("You're not in a guild.")
-        scroll:AddChild(label)
+        scroll:AddChild(NewLabel("You're not in a guild."))
         return
     end
 
+    local filter = UI.bankFilter or ""
+
+    local search = AceGUI:Create("EditBox")
+    search.editbox:SetFontObject(bodyFont)
+    search:SetLabel("Search items")
+    search:DisableButton(true)
+    search:SetFullWidth(true)
+    search:SetText(filter)
+    search:SetCallback("OnTextChanged", function(widget, event, text)
+        UI.bankFilter = text
+        -- Refreshing rebuilds the tab and destroys this box, so flag the one
+        -- that replaces it to take focus back and keep typing uninterrupted.
+        UI.restoreBankSearchFocus = true
+        UI:Refresh()
+    end)
+    scroll:AddChild(search)
+
+    if UI.restoreBankSearchFocus then
+        UI.restoreBankSearchFocus = nil
+        search:SetFocus()
+        search.editbox:SetCursorPosition(#filter)
+    end
+
+    AddSpacer(scroll, 12)
+
+    local needle = filter:lower()
+
     local bank = GuildLedger.guildData.bank
-    local header = AceGUI:Create("Label")
+    local header = NewLabel("")
     header:SetFullWidth(true)
     if bank.lastScan and bank.lastScan > 0 then
         header:SetText(("Last synced by %s, %d min ago. Click an item to add it to the shopping list."):format(
@@ -47,31 +193,53 @@ local function BuildBankTab(container)
     end
     table.sort(tabIndices)
 
+    local rowIndex, shown, total = 0, 0, 0
     for _, tabIndex in ipairs(tabIndices) do
         local tab = bank.tabs[tabIndex]
-        local tabHeader = AceGUI:Create("Heading")
-        tabHeader:SetText(tab.name or ("Tab " .. tabIndex))
-        tabHeader:SetFullWidth(true)
-        scroll:AddChild(tabHeader)
 
         local slotIndices = {}
-        for slot in pairs(tab.slots) do
-            table.insert(slotIndices, slot)
+        for slot, item in pairs(tab.slots) do
+            total = total + 1
+            if MatchesFilter(item.itemLink, needle) then
+                table.insert(slotIndices, slot)
+            end
         end
         table.sort(slotIndices)
 
-        for _, slot in ipairs(slotIndices) do
-            local item = tab.slots[slot]
-            local row = AceGUI:Create("InteractiveLabel")
-            row:SetText(("%s  x%d"):format(item.itemLink, item.count or 0))
-            row:SetFullWidth(true)
-            AddTooltip(row, item.itemLink)
-            row:SetCallback("OnClick", function()
-                if GuildLedger:AddShoppingListItem(item.itemLink, 1, nil) then
-                    GuildLedger:Print(("Added %s to the shopping list."):format(item.itemLink))
-                end
-            end)
-            scroll:AddChild(row)
+        -- Skip the heading entirely for a tab with nothing matching, so a
+        -- filtered view isn't padded out with empty tab names.
+        if #slotIndices > 0 then
+            local tabHeader = AceGUI:Create("Heading")
+            tabHeader:SetText(tab.name or ("Tab " .. tabIndex))
+            tabHeader:SetFullWidth(true)
+            tabHeader.label:SetFontObject(headerFont)
+            tabHeader:SetHeight(math.max(18, CurrentFontSize() + 10))
+            scroll:AddChild(tabHeader)
+
+            for _, slot in ipairs(slotIndices) do
+                local item = tab.slots[slot]
+                rowIndex = rowIndex + 1
+                shown = shown + 1
+
+                local row = NewInteractiveLabel(("%s  x%d"):format(item.itemLink, item.count or 0))
+                row:SetFullWidth(true)
+                SetStripe(row, rowIndex)
+                AddTooltip(row, item.itemLink)
+                row:SetCallback("OnClick", function()
+                    if GuildLedger:AddShoppingListItem(item.itemLink, 1, nil) then
+                        GuildLedger:Print(("Added %s to the shopping list."):format(item.itemLink))
+                    end
+                end)
+                scroll:AddChild(row)
+            end
+        end
+    end
+
+    if filter ~= "" then
+        if shown == 0 then
+            header:SetText(("Nothing in the bank matches that search (%d item stacks cached)."):format(total))
+        else
+            header:SetText(("Showing %d of %d item stacks."):format(shown, total))
         end
     end
 end
@@ -84,61 +252,107 @@ local function BuildShoppingTab(container)
     container:AddChild(scroll)
 
     if not GuildLedger.guildData then
-        local label = AceGUI:Create("Label")
-        label:SetText("You're not in a guild.")
-        scroll:AddChild(label)
+        scroll:AddChild(NewLabel("You're not in a guild."))
         return
     end
 
-    if GuildLedger:IsOfficer() then
+    local canEdit = GuildLedger:IsOfficer()
+
+    if canEdit then
         local addBox = AceGUI:Create("EditBox")
-        addBox:SetLabel("Shift-click an item into this box, then press Enter")
+        addBox.editbox:SetFontObject(bodyFont)
+        addBox:SetLabel("Shift-click an item here, optionally followed by a quantity, then press Enter")
         addBox:SetFullWidth(true)
         addBox:SetCallback("OnEnterPressed", function(widget, event, text)
-            if text and text ~= "" then
-                GuildLedger:AddShoppingListItem(text, 1, nil)
-                widget:SetText("")
-                UI:Refresh()
-            end
+            text = text and text:trim() or ""
+            if text == "" then return end
+            -- "<link> 20" sets the wanted quantity up front; a bare link wants 1.
+            local link, qty = text:match("^(.-)%s+(%d+)%s*$")
+            GuildLedger:AddShoppingListItem(link or text, tonumber(qty) or 1, nil)
+            widget:SetText("")
+            UI:Refresh()
         end)
         scroll:AddChild(addBox)
     else
-        local label = AceGUI:Create("Label")
-        label:SetText("Only officers can edit this list.")
-        label:SetFullWidth(true)
-        scroll:AddChild(label)
+        scroll:AddChild(NewLabel("This list is read-only for you; only officers can change it."))
     end
 
-    for _, entry in ipairs(GuildLedger:GetShoppingListStatus()) do
-        local statusText
-        if entry.missing == 0 then
-            statusText = "|cff00ff00In stock|r"
-        else
-            statusText = ("|cffff5555Need %d more|r"):format(entry.missing)
-        end
+    AddSpacer(scroll, 12)
 
-        local row = AceGUI:Create("InteractiveLabel")
-        row:SetText(("%s  -  have %d / %d  -  %s"):format(entry.itemLink, entry.have, entry.desired, statusText))
-        row:SetFullWidth(true)
-        AddTooltip(row, entry.itemLink)
-        if GuildLedger:IsOfficer() then
-            row:SetCallback("OnClick", function()
+    local entries = GuildLedger:GetShoppingListStatus()
+    if #entries == 0 then
+        scroll:AddChild(NewLabel("Nothing on the shopping list yet."))
+        return
+    end
+
+    local head = NewRow(scroll, nil)
+    local hItem = NewLabel("Item", headerFont)
+    hItem:SetRelativeWidth(0.40)
+    head:AddChild(hItem)
+    local hHave = NewLabel("In guild bank", headerFont)
+    hHave:SetRelativeWidth(0.30)
+    head:AddChild(hHave)
+    local hWant = NewLabel("Wanted", headerFont)
+    hWant:SetRelativeWidth(canEdit and 0.16 or 0.28)
+    head:AddChild(hWant)
+
+    for index, entry in ipairs(entries) do
+        local row = NewRow(scroll, index)
+
+        local item = NewInteractiveLabel(entry.itemLink)
+        item:SetRelativeWidth(0.40)
+        AddTooltip(item, entry.itemLink)
+        row:AddChild(item)
+
+        local haveText
+        if entry.missing == 0 then
+            haveText = ("|cff40ff40%d|r  (stocked)"):format(entry.have)
+        else
+            haveText = ("|cffff5555%d|r  (need %d more)"):format(entry.have, entry.missing)
+        end
+        local have = NewLabel(haveText)
+        have:SetRelativeWidth(0.30)
+        row:AddChild(have)
+
+        if canEdit then
+            local qty = AceGUI:Create("EditBox")
+            qty.editbox:SetFontObject(bodyFont)
+            qty:DisableButton(true)
+            qty:SetText(tostring(entry.desired))
+            qty:SetRelativeWidth(0.16)
+            qty:SetCallback("OnEnterPressed", function(widget, event, text)
+                GuildLedger:SetShoppingListQuantity(entry.itemID, tonumber(text))
+                widget:ClearFocus()
+                UI:Refresh()
+            end)
+            row:AddChild(qty)
+
+            local remove = AceGUI:Create("Button")
+            remove:SetText("Remove")
+            remove:SetRelativeWidth(0.13)
+            remove:SetCallback("OnClick", function()
                 GuildLedger:RemoveShoppingListItem(entry.itemID)
                 UI:Refresh()
             end)
+            row:AddChild(remove)
+        else
+            local qty = NewLabel(tostring(entry.desired))
+            qty:SetRelativeWidth(0.28)
+            row:AddChild(qty)
         end
-        scroll:AddChild(row)
     end
 end
 
 function UI:Create()
     if frame then return end
 
+    self:ApplyFont()
+
     frame = AceGUI:Create("Frame")
     frame:SetTitle("GuildLedger")
     frame:SetLayout("Fill")
-    frame:SetWidth(420)
-    frame:SetHeight(500)
+    frame:SetWidth(560)
+    frame:SetHeight(560)
     frame:SetCallback("OnClose", function(widget) widget:Hide() end)
     frame:Hide()
 
@@ -149,6 +363,10 @@ function UI:Create()
         { text = "Shopping List", value = "list" },
     })
     tabGroup:SetCallback("OnGroupSelected", function(container, event, group)
+        -- Track the selection ourselves. AceGUI keeps it in localstatus rather
+        -- than on the widget, so reading tabGroup.selected always gave nil and
+        -- every refresh snapped the user back to the first tab.
+        UI.selectedTab = group
         container:ReleaseChildren()
         if group == "bank" then
             BuildBankTab(container)
@@ -165,7 +383,7 @@ end
 
 function UI:Refresh()
     if not frame or not frame:IsShown() then return end
-    self.tabGroup:SelectTab(self.tabGroup.selected or "bank")
+    self.tabGroup:SelectTab(self.selectedTab or "bank")
 end
 
 function UI:Toggle()
@@ -177,3 +395,5 @@ function UI:Toggle()
         self:Refresh()
     end
 end
+
+UI:ApplyFont()

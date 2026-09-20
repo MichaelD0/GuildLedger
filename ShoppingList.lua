@@ -32,6 +32,37 @@ function GuildLedger:AddShoppingListItem(itemLink, desiredCount, note)
     return true
 end
 
+-- Changes how many of an item the guild wants. Separated from
+-- AddShoppingListItem so editing a quantity doesn't rewrite addedBy/addedAt
+-- and reassign authorship of the entry to whoever adjusted the number.
+function GuildLedger:SetShoppingListQuantity(itemID, desired)
+    if not self:IsOfficer() then
+        self:Print("Only officers can edit the guild shopping list.")
+        return false
+    end
+    if not self.guildData then return false end
+
+    local entry = self.guildData.shoppingList[itemID]
+    if not entry then return false end
+
+    desired = tonumber(desired)
+    if not desired then
+        self:Print("That quantity isn't a number.")
+        return false
+    end
+
+    -- A wanted count below 1 means the item shouldn't be listed at all.
+    desired = math.floor(desired)
+    if desired < 1 then
+        return self:RemoveShoppingListItem(itemID)
+    end
+
+    entry.desired = desired
+    self:SendMessage("GuildLedger_ListUpdated")
+    self:BroadcastShoppingList()
+    return true
+end
+
 function GuildLedger:RemoveShoppingListItem(itemID)
     if not self:IsOfficer() then
         self:Print("Only officers can edit the guild shopping list.")
