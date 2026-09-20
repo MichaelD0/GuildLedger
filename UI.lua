@@ -210,9 +210,59 @@ local function AddSpacer(parent, height)
     return spacer
 end
 
+-- AceGUI ships nothing that just puts cells side by side. Flow is the closest,
+-- and it pads: three pixels above every row, and it stacks children on a
+-- hardcoded per-widget "alignoffset" rather than centring them, so in a 23px
+-- row the item text sat 4.5px below the top and 1.5 above the bottom - the
+-- sag, and the wasted space with it.
+-- This is one row of cells, each centred on the tallest, with nothing added
+-- around it. Rows come out flush, the same as the bank tab's, where the stripe
+-- is what separates them.
+local ROW_LAYOUT = "GuildLedgerRow"
+AceGUI:RegisterLayout(ROW_LAYOUT, function(content, children)
+    local width = content.width or content:GetWidth() or 0
+
+    -- Widths first, in their own pass: setting a cell's width re-measures its
+    -- text, so any height read before this is the height the cell had at
+    -- whatever width it was last given - 200px, for a cell built this frame.
+    for i = 1, #children do
+        local child = children[i]
+        if child.width == "relative" then
+            child:SetWidth(width * (child.relWidth or 1))
+        elseif child.width == "fill" then
+            child:SetWidth(width)
+        end
+        if child.DoLayout then
+            child:DoLayout()
+        end
+    end
+
+    local height = 0
+    for i = 1, #children do
+        local frame = children[i].frame
+        height = math.max(height, frame.height or frame:GetHeight() or 0)
+    end
+
+    local x = 0
+    for i = 1, #children do
+        local frame = children[i].frame
+        local cellHeight = frame.height or frame:GetHeight() or 0
+        -- Floored, so a cell an odd number of pixels shorter than the row
+        -- lands on a whole pixel rather than blurring across two.
+        frame:ClearAllPoints()
+        frame:SetPoint("TOPLEFT", content, "TOPLEFT", x, -math.floor((height - cellHeight) / 2))
+        frame:Show()
+        x = x + (frame.width or frame:GetWidth() or 0)
+    end
+
+    if content.obj.LayoutFinished then
+        content.obj:LayoutFinished(nil, height)
+    end
+end)
+
 local function NewRow(parent, index)
     local row = AceGUI:Create("SimpleGroup")
-    row:SetLayout("Flow")
+    row:SetLayout(ROW_LAYOUT)
     row:SetFullWidth(true)
     parent:AddChild(row)
     SetStripe(row, index)
@@ -436,26 +486,21 @@ end
 -- is why the remove button says "X" rather than "Remove": at any width narrow
 -- enough to leave the item name room, the word rendered as "Re...". The tooltip
 -- carries the meaning instead.
--- Keep the total a little under 1.0 or Flow rounding wraps the last column.
+-- The total is a little under 1.0, which is now simply a right margin: the row
+-- layout places cells left to right and never wraps, where Flow used to drop
+-- the last column onto a second line if rounding pushed the total over.
 local COL_ITEM, COL_HAVE, COL_WANT, COL_REMOVE = 0.60, 0.12, 0.15, 0.10
 
 -- AceGUI sizes an EditBox to leave room for a label even when there is no
--- label to show - 26px of frame around 17px of text - and a Button to 24, and
--- Flow then sizes the row to the tallest thing in it. That made a shopping
--- list row 28px tall to hold one line. Sizing both controls to the text, the
--- way the icons already do, brings it to 23. 20 is the same floor the toolbar
--- buttons use, and is about as short as InputBoxTemplate's art reads at.
+-- label to show - 26px of frame around 17px of text - and a Button to 24. The
+-- row is as tall as the tallest thing in it, so those two set the row height
+-- on their own, and a row holding one line of text came to 28px.
+-- These are the tallest cells in the row, so this is the row height. 20 is the
+-- same floor the toolbar buttons use, and about as short as InputBoxTemplate's
+-- art reads at. The height is reset by OnAcquire, so nothing leaks into the
+-- widget pool.
 local function ControlHeight()
     return math.max(20, CurrentFontSize() + 6)
-end
-
--- alignoffset is the line Flow centres a row on. AceGUI hardcodes it to 12 for
--- an EditBox, measured from the 26px frame, so it has to be re-centred with
--- the height or the row is padded back out to make room for the old one.
--- Both are reset by OnAcquire, so nothing leaks into the widget pool.
-local function Compact(widget, height)
-    widget:SetHeight(height)
-    widget.alignoffset = height / 2
 end
 
 -- Stock against target, green once the target is met and red while it isn't.
@@ -538,7 +583,7 @@ local function BuildShoppingTab(container)
         qty:DisableButton(true)
         qty:SetText(tostring(entry.desired))
         qty:SetRelativeWidth(COL_WANT)
-        Compact(qty, controlHeight)
+        qty:SetHeight(controlHeight)
         qty:SetCallback("OnEnterPressed", function(widget, event, text)
             GuildLedger:SetShoppingListQuantity(entry.itemID, tonumber(text))
             widget:ClearFocus()
@@ -549,7 +594,7 @@ local function BuildShoppingTab(container)
         local remove = AceGUI:Create("Button")
         remove:SetText("X")
         remove:SetRelativeWidth(COL_REMOVE)
-        Compact(remove, controlHeight)
+        remove:SetHeight(controlHeight)
         AddTextTooltip(remove, "Remove",
             ("Take %s off your shopping list."):format(ItemNameFromLink(entry.itemLink)))
         remove:SetCallback("OnClick", function()
