@@ -1,6 +1,6 @@
 ## Interface: 120100
 ## Title: GuildLedger
-## Notes: Scans the guild bank, syncs it across the guild, and keeps a shared shopping list of what's needed.
+## Notes: Scans the guild bank, syncs it across the guild, and keeps a personal shopping list of what's needed.
 ## Author: GuildLedger contributors
 ## Version: 0.1.0
 ## SavedVariables: GuildLedgerDB

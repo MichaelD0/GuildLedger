@@ -1,8 +1,8 @@
 # GuildLedger
 
 A World of Warcraft (retail) addon that scans your guild bank, syncs that
-snapshot across the guild, and keeps a guild-shared shopping list of what
-still needs to be stocked.
+snapshot across the guild, and keeps a personal shopping list of what you
+mean to stock it with.
 
 ## How it works
 
@@ -16,10 +16,11 @@ query it while standing at a guild banker with the bank window open. So:
    message (guild channel), so people who weren't at the bank still see a
    recent snapshot. Clients also ask the guild to catch them up shortly after
    login, and `/gledger sync` does the same on demand.
-3. **Shopping list** — officers (configurable rank threshold) maintain a
-   shared list of items + desired quantities. The UI diffs that list against
-   the cached bank contents and shows stock over target as `35 / 200`, green
-   once the target is met and red while it isn't.
+3. **Shopping list** — you keep your own list of items + desired quantities.
+   It's per character, saved locally, and never sent to anyone: the bank is
+   the shared half of this addon, the list is yours. The UI diffs the list
+   against the cached bank contents and shows stock over target as
+   `35 / 200`, green once the target is met and red while it isn't.
 4. **Shop** — at the auction house, a side panel lists what's still missing.
    Click a row and it searches for that item.
 
@@ -33,7 +34,7 @@ for when you'd rather not use slash commands.
 | Command | What it does |
 | --- | --- |
 | `/gledger` | Toggle the main window. |
-| `/gledger sync` | Ask the guild for a fresh bank snapshot and shopping list. |
+| `/gledger sync` | Ask the guild for a fresh bank snapshot. |
 | `/gledger config` | Open the options panel. |
 | `/gledger scan` | Force a bank scan (must be at a guild banker). |
 | `/gledger status` | Print guild binding, cache contents and guild bank API availability. |
@@ -54,8 +55,6 @@ Reachable via `/gledger config`:
   yourself first is left alone on close.
 - **Show the shopping list at the auction house** — pin the list beside the
   auction house window.
-- **Officer rank threshold** — guild rank index (0 = Guild Master) at or
-  below which a member may edit the shopping list.
 - **Font size** — text size throughout the window, 10–24 (default 14).
 - **Low stock threshold** — reserved; nothing reads it yet.
 
@@ -69,8 +68,8 @@ the search.
 
 The panel only appears when there's actually something on the list, and its
 close button dismisses it for that visit. Opening the auction house also asks
-the guild for a fresh list (at most once a minute), so you aren't shopping
-from whatever snapshot you had at login.
+the guild for a fresh bank snapshot (at most once a minute), so the "in bank"
+column isn't quoting what you had at login while you decide what to buy.
 
 Driving Blizzard's search means calling into `Blizzard_AuctionHouseUI`
 internals, which are not a stable API. `SearchAuctionHouse` tries the search
@@ -79,33 +78,30 @@ bar's `StartSearch`, then the search box's own `OnEnterPressed`, then
 written into the search box before any of that, so the worst case after a
 patch renames something is "press Enter yourself", not a Lua error.
 
-## Who can edit the shopping list
+## What is shared and what isn't
 
-The list is read-only for everyone below the officer rank threshold. That
-restriction is enforced **on receipt**, not just in the UI: `OnCommReceived`
-checks the sender's guild rank from the roster before accepting a list
-snapshot. Senders of addon messages are supplied by the server and can't be
-forged, so a modified client that broadcasts edits it isn't entitled to is
-simply ignored by everyone else.
+Only the bank snapshot travels between clients, and it's accepted from anyone
+— a scan is an observation that whoever is standing at the banker can
+legitimately make.
 
-Bank snapshots are accepted from anyone — a scan is an observation that
-whoever is standing at the banker can legitimately make.
+The shopping list never goes on the wire. It lives in `db.char`, so every
+character keeps their own, and nobody needs a rank to edit it: there is no
+shared copy to protect, no merge to lose an edit to, and no officer check to
+configure. If you want the guild to see your list, paste it in chat.
 
-`GuildLedger.ALWAYS_ALLOWED_EDITORS` in `Core.lua` is an allowlist of
-characters who may edit regardless of rank. It lives in shared code rather
-than saved variables because every client validates against its own copy: an
-entry only one person had would be rejected by everyone else. Keys are
-`"Name"` (that name on any realm) or `"Name-Realm"` (that character only).
+A list saved back when it was guild-shared is moved into the current
+character's list the first time that character's guild resolves; entries
+already there win.
 
 ## Project layout
 
 ```
 GuildLedger.toc     Addon manifest (## Interface 120100, retail 12.1.0)
-Core.lua            AceAddon setup, per-guild data binding, permissions,
-                    slash commands, tracing
+Core.lua            AceAddon setup, per-guild data binding, slash commands,
+                    tracing
 BankScan.lua        Scans the guild bank UI into guildData.bank
-Comm.lua            Broadcasts/receives bank + shopping list snapshots (AceComm)
-ShoppingList.lua    CRUD + have/need diff logic for the shared shopping list
+Comm.lua            Broadcasts/receives bank snapshots (AceComm)
+ShoppingList.lua    CRUD + have/need diff logic for the per-character list
 UI.lua              AceGUI window: Bank Inventory tab, Shopping List tab,
                     Scan/Sync toolbar, auto-open at the guild bank
 AuctionHouse.lua    Shopping list panel pinned to the auction house window
@@ -170,19 +166,12 @@ same handler threw.
 
 ## Known rough edges
 
-- **Shopping list edits are last-writer-wins with no timestamp.** Each edit
-  broadcasts the whole list and receivers replace theirs wholesale, so two
-  officers editing within the same moment can lose one edit and end up with
-  different lists until the next edit repairs it. Deliberate: a per-item
-  merge with tombstones is a lot of machinery for a race that rarely happens
-  in a small guild.
+- **The shopping list doesn't follow you between characters.** It's per
+  character by design — that's what makes it free of merge conflicts and
+  rank checks — but your alt starts with an empty one.
 - **Sync is best-effort.** There's no server; a catch-up request is only
-  answered if an officer is online to answer it. Otherwise the client retries
-  next login.
-- **The officer rank threshold is per-client.** Receive-side validation reads
-  the *receiver's* setting, so guildmates who configure it differently will
-  disagree about who may edit. Moving the threshold into the synced guild
-  data would fix this properly.
+  answered if a guildmate with a newer snapshot is online to answer it.
+  Otherwise the client retries next login.
 - **The auction house panel rides on Blizzard internals.** See above: it
   degrades to filling the search box rather than erroring, but a patch can
   still make one-click search stop working until this is updated.

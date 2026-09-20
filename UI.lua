@@ -226,7 +226,7 @@ local function BuildBankTab(container)
     local header = NewLabel("")
     header:SetFullWidth(true)
     if bank.lastScan and bank.lastScan > 0 then
-        header:SetText(("Last synced by %s, %d min ago. Click an item to add it to the shopping list."):format(
+        header:SetText(("Last synced by %s, %d min ago. Click an item to add it to your shopping list."):format(
             bank.lastScannedBy or "?", math.floor((time() - bank.lastScan) / 60)))
     else
         header:SetText("No bank data yet. Open the guild bank to scan it, or run /gledger sync.")
@@ -274,7 +274,7 @@ local function BuildBankTab(container)
                 AddTooltip(row, item.itemLink)
                 row:SetCallback("OnClick", function()
                     if GuildLedger:AddShoppingListItem(item.itemLink, 1, nil) then
-                        GuildLedger:Print(("Added %s to the shopping list."):format(item.itemLink))
+                        GuildLedger:Print(("Added %s to your shopping list."):format(item.itemLink))
                     end
                 end)
                 scroll:AddChild(row)
@@ -300,15 +300,11 @@ end
 local COL_ITEM, COL_HAVE, COL_WANT, COL_REMOVE = 0.60, 0.12, 0.15, 0.10
 
 -- Stock against target, green once the target is met and red while it isn't.
--- Officers get the bare "35 /" because the quantity box sitting next to it is
--- the target, and printing it twice helps nobody; everyone else gets both
--- numbers in one label. Either way it replaces "35  (need 165 more)" with the
--- same information in about a third of the width, which the item name takes.
-local function StockText(entry, withTarget)
+-- Just "35 /" because the quantity box sitting next to it is the target, and
+-- printing it twice helps nobody. Replaces "35  (need 165 more)" with the same
+-- information in about a third of the width, which the item name takes.
+local function StockText(entry)
     local color = entry.missing == 0 and "|cff40ff40" or "|cffff5555"
-    if withTarget then
-        return ("%s%d|r / %d"):format(color, entry.have, entry.desired)
-    end
     return ("%s%d|r /"):format(color, entry.have)
 end
 
@@ -319,31 +315,22 @@ local function BuildShoppingTab(container)
     scroll:SetFullHeight(true)
     container:AddChild(scroll)
 
-    if not GuildLedger.guildData then
-        scroll:AddChild(NewLabel("You're not in a guild."))
-        return
-    end
-
-    local canEdit = GuildLedger:IsOfficer()
-
-    if canEdit then
-        local addBox = AceGUI:Create("EditBox")
-        addBox.editbox:SetFontObject(bodyFont)
-        addBox:SetLabel("Shift-click an item here, optionally followed by a quantity, then press Enter")
-        addBox:SetFullWidth(true)
-        addBox:SetCallback("OnEnterPressed", function(widget, event, text)
-            text = text and text:trim() or ""
-            if text == "" then return end
-            -- "<link> 20" sets the wanted quantity up front; a bare link wants 1.
-            local link, qty = text:match("^(.-)%s+(%d+)%s*$")
-            GuildLedger:AddShoppingListItem(link or text, tonumber(qty) or 1, nil)
-            widget:SetText("")
-            UI:Refresh()
-        end)
-        scroll:AddChild(addBox)
-    else
-        scroll:AddChild(NewLabel("This list is read-only for you; only officers can change it."))
-    end
+    -- No guild check: the list is this character's own, and the bank column
+    -- simply reads 0 until there's a scan to compare against.
+    local addBox = AceGUI:Create("EditBox")
+    addBox.editbox:SetFontObject(bodyFont)
+    addBox:SetLabel("Shift-click an item here, optionally followed by a quantity, then press Enter")
+    addBox:SetFullWidth(true)
+    addBox:SetCallback("OnEnterPressed", function(widget, event, text)
+        text = text and text:trim() or ""
+        if text == "" then return end
+        -- "<link> 20" sets the wanted quantity up front; a bare link wants 1.
+        local link, qty = text:match("^(.-)%s+(%d+)%s*$")
+        GuildLedger:AddShoppingListItem(link or text, tonumber(qty) or 1, nil)
+        widget:SetText("")
+        UI:Refresh()
+    end)
+    scroll:AddChild(addBox)
 
     AddSpacer(scroll, 12)
 
@@ -372,34 +359,32 @@ local function BuildShoppingTab(container)
         AddTooltip(item, entry.itemLink)
         row:AddChild(item)
 
-        local have = NewLabel(StockText(entry, not canEdit))
-        have:SetRelativeWidth(canEdit and COL_HAVE or (COL_HAVE + COL_WANT))
+        local have = NewLabel(StockText(entry))
+        have:SetRelativeWidth(COL_HAVE)
         row:AddChild(have)
 
-        if canEdit then
-            local qty = AceGUI:Create("EditBox")
-            qty.editbox:SetFontObject(bodyFont)
-            qty:DisableButton(true)
-            qty:SetText(tostring(entry.desired))
-            qty:SetRelativeWidth(COL_WANT)
-            qty:SetCallback("OnEnterPressed", function(widget, event, text)
-                GuildLedger:SetShoppingListQuantity(entry.itemID, tonumber(text))
-                widget:ClearFocus()
-                UI:Refresh()
-            end)
-            row:AddChild(qty)
+        local qty = AceGUI:Create("EditBox")
+        qty.editbox:SetFontObject(bodyFont)
+        qty:DisableButton(true)
+        qty:SetText(tostring(entry.desired))
+        qty:SetRelativeWidth(COL_WANT)
+        qty:SetCallback("OnEnterPressed", function(widget, event, text)
+            GuildLedger:SetShoppingListQuantity(entry.itemID, tonumber(text))
+            widget:ClearFocus()
+            UI:Refresh()
+        end)
+        row:AddChild(qty)
 
-            local remove = AceGUI:Create("Button")
-            remove:SetText("X")
-            remove:SetRelativeWidth(COL_REMOVE)
-            AddTextTooltip(remove, "Remove",
-                ("Take %s off the guild shopping list."):format(ItemNameFromLink(entry.itemLink)))
-            remove:SetCallback("OnClick", function()
-                GuildLedger:RemoveShoppingListItem(entry.itemID)
-                UI:Refresh()
-            end)
-            row:AddChild(remove)
-        end
+        local remove = AceGUI:Create("Button")
+        remove:SetText("X")
+        remove:SetRelativeWidth(COL_REMOVE)
+        AddTextTooltip(remove, "Remove",
+            ("Take %s off your shopping list."):format(ItemNameFromLink(entry.itemLink)))
+        remove:SetCallback("OnClick", function()
+            GuildLedger:RemoveShoppingListItem(entry.itemID)
+            UI:Refresh()
+        end)
+        row:AddChild(remove)
     end
 end
 
@@ -445,14 +430,14 @@ function UI:CreateToolbar()
     end
 
     self.syncButton = NewToolbarButton(bar, "Sync", 80,
-        "Ask the guild for a newer bank snapshot and the current shopping list.",
+        "Ask the guild for a newer bank snapshot.",
         function()
             if not GuildLedger.guildData then
                 GuildLedger:Print("You're not in a guild.")
                 return
             end
             GuildLedger:RequestSync()
-            GuildLedger:Print("Requested a bank and shopping list sync from the guild.")
+            GuildLedger:Print("Requested a fresh bank snapshot from the guild.")
         end)
     self.syncButton:SetPoint("LEFT", self.scanButton, "RIGHT", 4, 0)
 end

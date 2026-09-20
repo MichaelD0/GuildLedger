@@ -1,48 +1,38 @@
 local ADDON_NAME, ns = ...
 local GuildLedger = ns.addon
 
--- Adds or updates an entry on the guild-shared shopping list. itemLink can be
--- a full item link (e.g. shift-clicked from a bag/bank slot) or anything
+-- The shopping list is per character and never leaves this client: it lives in
+-- db.char, so two people can keep their own lists of what they mean to pick up
+-- without either one overwriting the other. The guild bank half of the addon
+-- is still shared; only the list is private.
+function GuildLedger:GetShoppingList()
+    return self.db.char.shoppingList
+end
+
+-- Adds or updates an entry on your shopping list. itemLink can be a full item
+-- link (e.g. shift-clicked from a bag/bank slot) or anything
 -- C_Item.GetItemInfoInstant can resolve to an itemID.
 function GuildLedger:AddShoppingListItem(itemLink, desiredCount, note)
-    if not self:IsOfficer() then
-        self:Print("Only officers can edit the guild shopping list.")
-        return false
-    end
-    if not self.guildData then
-        self:Print("You're not in a guild.")
-        return false
-    end
-
     local itemID = C_Item.GetItemInfoInstant(itemLink)
     if not itemID then
         self:Print("Could not resolve that item.")
         return false
     end
 
-    self.guildData.shoppingList[itemID] = {
+    self:GetShoppingList()[itemID] = {
         itemLink = itemLink,
         desired = desiredCount or 1,
         note = note,
-        addedBy = UnitName("player"),
         addedAt = time(),
     }
     self:SendMessage("GuildLedger_ListUpdated")
-    self:BroadcastShoppingList()
     return true
 end
 
--- Changes how many of an item the guild wants. Separated from
--- AddShoppingListItem so editing a quantity doesn't rewrite addedBy/addedAt
--- and reassign authorship of the entry to whoever adjusted the number.
+-- Changes how many of an item you want. Separated from AddShoppingListItem so
+-- editing a quantity doesn't rewrite addedAt.
 function GuildLedger:SetShoppingListQuantity(itemID, desired)
-    if not self:IsOfficer() then
-        self:Print("Only officers can edit the guild shopping list.")
-        return false
-    end
-    if not self.guildData then return false end
-
-    local entry = self.guildData.shoppingList[itemID]
+    local entry = self:GetShoppingList()[itemID]
     if not entry then return false end
 
     desired = tonumber(desired)
@@ -59,20 +49,12 @@ function GuildLedger:SetShoppingListQuantity(itemID, desired)
 
     entry.desired = desired
     self:SendMessage("GuildLedger_ListUpdated")
-    self:BroadcastShoppingList()
     return true
 end
 
 function GuildLedger:RemoveShoppingListItem(itemID)
-    if not self:IsOfficer() then
-        self:Print("Only officers can edit the guild shopping list.")
-        return false
-    end
-    if not self.guildData then return false end
-
-    self.guildData.shoppingList[itemID] = nil
+    self:GetShoppingList()[itemID] = nil
     self:SendMessage("GuildLedger_ListUpdated")
-    self:BroadcastShoppingList()
     return true
 end
 
@@ -92,12 +74,12 @@ end
 
 -- Returns a display-ready array of
 -- { itemID, itemLink, desired, have, missing, note }, sorted so the items
--- most short of their target come first.
+-- most short of their target come first. Without a guild (or before the first
+-- scan) every "have" is simply 0 - the list itself is still yours to keep.
 function GuildLedger:GetShoppingListStatus()
     local results = {}
-    if not self.guildData then return results end
 
-    for itemID, entry in pairs(self.guildData.shoppingList) do
+    for itemID, entry in pairs(self:GetShoppingList()) do
         local have = self:GetBankCount(itemID)
         table.insert(results, {
             itemID = itemID,
