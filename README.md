@@ -37,7 +37,9 @@ for when you'd rather not use slash commands.
 | `/gledger config` | Open the options panel. |
 | `/gledger scan` | Force a bank scan (must be at a guild banker). |
 | `/gledger status` | Print guild binding, cache contents and guild bank API availability. |
-| `/gledger debug` | Toggle trace output. Persists across reloads. |
+| `/gledger debug` | Toggle trace output *to chat*. Persists across reloads. |
+| `/gledger trace` | Report how many trace lines are buffered, and where they land. |
+| `/gledger trace clear` | Empty the trace buffer. |
 
 `/guildledger` works as an alias for all of the above.
 
@@ -138,7 +140,29 @@ you're currently interacting with a guild banker, and whether the guild bank
 API functions exist on your client.
 
 `/gledger debug` adds a running trace of the scan — banker opened, tab count,
-tabs and item stacks recorded.
+tabs and item stacks recorded — to your chat frame.
+
+That trace is **also kept on disk regardless of whether `debug` is on**. The
+last 200 lines live in `GuildLedgerDB.global.trace`, timestamped and tagged
+with the character that produced them, and land in
+
+```
+WTF/Account/<account>/SavedVariables/GuildLedger.lua
+```
+
+WoW only writes saved variables on logout or `/reload`, so that file always
+lags the live session by however long it's been since the last one — `/reload`
+first if you want the current session's lines. `debug` therefore controls only
+whether the trace is *printed*; it no longer controls whether it's *recorded*,
+so a problem can be read back after the fact instead of needing tracing to
+have been switched on before it happened.
+
+`/gledger trace` reports how many lines are buffered; `/gledger trace clear`
+empties it. A session-start marker is written on every load, so it's easy to
+tell where one session's lines end and the next begins.
+
+The same directory holds `!BugGrabber.lua` if you run BugSack/!BugGrabber,
+which is where actual Lua errors (with stack and locals) end up.
 
 Errors show up in BugSack/!BugGrabber if you have them. Worth checking first:
 a function that silently never runs usually means something earlier in the
