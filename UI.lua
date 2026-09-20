@@ -106,6 +106,18 @@ local function AddTooltip(widget, itemLink)
     widget:SetCallback("OnLeave", function() GameTooltip:Hide() end)
 end
 
+local function AddTextTooltip(widget, title, body)
+    widget:SetCallback("OnEnter", function(w)
+        GameTooltip:SetOwner(w.frame, "ANCHOR_RIGHT")
+        GameTooltip:SetText(title, 1, 1, 1)
+        if body then
+            GameTooltip:AddLine(body, nil, nil, nil, true)
+        end
+        GameTooltip:Show()
+    end)
+    widget:SetCallback("OnLeave", function() GameTooltip:Hide() end)
+end
+
 -- Item links always carry the display name in brackets. Reading it from the
 -- link avoids GetItemInfo, which returns nil for anything not in the client's
 -- cache yet and would make matches come and go as the cache fills.
@@ -254,10 +266,12 @@ local function BuildBankTab(container)
 end
 
 -- Shopping list column widths, as fractions of the row. AceGUI's Button insets
--- its label by 15px on each side, so 30px of any button is pure padding: at the
--- old 0.13 the Remove button had ~38px left for the word and rendered as "Re...".
+-- its label by 15px on each side, so 30px of any button is pure padding - which
+-- is why the remove button says "X" rather than "Remove": at any width narrow
+-- enough to leave the item name room, the word rendered as "Re...". The tooltip
+-- carries the meaning instead.
 -- Keep the total a little under 1.0 or Flow rounding wraps the last column.
-local COL_ITEM, COL_HAVE, COL_WANT, COL_REMOVE = 0.34, 0.27, 0.14, 0.22
+local COL_ITEM, COL_HAVE, COL_WANT, COL_REMOVE = 0.40, 0.32, 0.15, 0.10
 
 local function BuildShoppingTab(container)
     local scroll = AceGUI:Create("ScrollFrame")
@@ -304,7 +318,7 @@ local function BuildShoppingTab(container)
     local hItem = NewLabel("Item", headerFont)
     hItem:SetRelativeWidth(COL_ITEM)
     head:AddChild(hItem)
-    local hHave = NewLabel("In bank", headerFont)
+    local hHave = NewLabel("In guild bank", headerFont)
     hHave:SetRelativeWidth(COL_HAVE)
     head:AddChild(hHave)
     local hWant = NewLabel("Wanted", headerFont)
@@ -343,8 +357,10 @@ local function BuildShoppingTab(container)
             row:AddChild(qty)
 
             local remove = AceGUI:Create("Button")
-            remove:SetText("Remove")
+            remove:SetText("X")
             remove:SetRelativeWidth(COL_REMOVE)
+            AddTextTooltip(remove, "Remove",
+                ("Take %s off the guild shopping list."):format(ItemNameFromLink(entry.itemLink)))
             remove:SetCallback("OnClick", function()
                 GuildLedger:RemoveShoppingListItem(entry.itemID)
                 UI:Refresh()
